@@ -3,6 +3,7 @@
 #include <tuple>
 #include <limits>
 #include <algorithm>
+#include <fstream>
 
 using namespace cv;
 using namespace std;
@@ -20,7 +21,7 @@ struct ProgramSettings {
       MserSettings() :
          delta(2),
          minArea(0.00038),
-         maxArea(0.00042),
+         maxArea(0.00052),
          maxVariation(0.25),
          minDiversity(0.2)
       {}
@@ -527,8 +528,13 @@ void findMatches(vector<Match>& matches, const vector<Region>& refRegions,
       // determine matched region and if match has occured
       double CMF = (TCmax - TCmax2)/TCmax2;
       
+      // spacial distance between top two matches
+      Point2d pt1(refRegions[TCmaxIdx].ellipse.center.x, refRegions[TCmaxIdx].ellipse.center.y);
+      Point2d pt2(refRegions[TCmaxIdx2].ellipse.center.y, refRegions[TCmaxIdx2].ellipse.center.y);
+      double dist = sqrt((pt1.x-pt2.x)*(pt1.x-pt2.x)+(pt1.y-pt2.y)*(pt1.y-pt2.y));
+
       //if ( TCmaxIdx != 0 && TCmaxIdx2 != 0 && CMF < 1.0 && CMF > 0.4 )
-      if ( CMF > 5 )
+      if ( dist < 5 || CMF > 0.8 )
       {
          matches.push_back(
             Match(Line(
@@ -592,7 +598,7 @@ int main(int argc, char *argv[])
    // second (type double): CMF
 
    cout << "HERE" << endl;
-
+/*
    for ( size_t i = 0; i < matches.size(); ++i )
    {
       //if ( matches[i].second > 0.4 && matches[i].second < 1 )
@@ -608,6 +614,79 @@ int main(int argc, char *argv[])
             2);
       }
    }
+*/
+   // Test homography transforms
+   double M[3][3];
+   Mat T(3,3,CV_64FC1);
+   ifstream fin(argv[3]);
+   for ( int row = 0; row < 3; ++row )
+      for ( int col = 0; col < 3; ++col )
+         fin >> T.at<double>(row,col);
+   fin.close();
+
+   T = T.inv();
+   
+   for ( int row = 0; row < 3; ++row )
+      for ( int col = 0; col < 3; ++col )
+         M[row][col] = T.at<double>(row,col);
+
+   cout << matches.size() << endl;
+
+   int counter = 0;
+   int total = 0;
+   // ignore Z
+   for ( size_t i = 0; i < matches.size(); ++i )
+   {
+      double x = matches[i].first.first.x;
+      double y = matches[i].first.first.y;
+
+      // transformed point
+      Point2d np = Point2d(
+         (x*M[0][0] + y*M[0][1] + M[0][2]) / (x*M[2][0] + y*M[2][1] + M[2][2]),
+         (x*M[1][0] + y*M[1][1] + M[1][2]) / (x*M[2][0] + y*M[2][1] + M[2][2]));
+
+      if ( np.x > 0 && np.x < refImage.size().width &&
+           np.y > 0 && np.y < refImage.size().height )
+         total++;
+      else
+         continue;
+
+      // reference image match point
+      Point2d rp = matches[i].first.second;
+
+      //pMatch = pMatch / pMatch.at<double>(2,0);
+      double dist = sqrt((np.x-rp.x)*(np.x-rp.x) + (np.y-rp.y)*(np.y-rp.y));
+      cout << dist << endl;
+
+      if ( dist < 10 ) {
+         line(output,
+              Point(x+refImage.size().width,y),
+              Point(matches[i].first.second.x,
+                    matches[i].first.second.y),
+              Scalar(50+((i * 137) % 127),
+                     50+((i * 17) % 127),
+                     50+((i * 293) % 127)),
+              2);
+         counter++;
+      }
+/*
+      if ( dist < 100 )
+      {
+         line(output,
+            Point(matches[i].first.first.x+refImage.size().width,
+                  matches[i].first.first.y),
+            Point(matches[i].first.second.x,
+                  matches[i].first.second.y),
+            Scalar(50+((i * 137) % 127),
+                   50+((i * 17) % 127),
+                   50+((i * 293) % 127)),
+            2);
+      }
+      */
+   }
+
+   cout << 100.0 * counter / total << "%" << endl;
+
 
    imshow("Output", output);
    waitKey(0);
