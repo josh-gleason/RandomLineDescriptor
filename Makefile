@@ -1,7 +1,7 @@
-FLAGS=`pkg-config opencv --cflags` -std=c++11
+FLAGS=`pkg-config opencv --cflags` -std=c++11 -g
 LIBS=`pkg-config opencv --libs`
 
-all: bin/main bin/test
+all: bin/main
 
 bin/main: src/main.cc Makefile
 	g++ ${FLAGS} src/main.cc ${LIBS} -o bin/main

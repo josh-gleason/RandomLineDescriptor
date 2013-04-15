@@ -5,6 +5,11 @@
 using namespace cv;
 using namespace std;
 
+typedef pair<Point2d,Point2d> Line;
+
+const int CV_FTYPE = CV_64FC1;
+typedef double FType;
+
 struct ProgramSettings {
    struct MserSettings {
       int delta;
@@ -20,15 +25,15 @@ struct ProgramSettings {
 void getEllipsePoints(vector<Point2d>& vertices, const RotatedRect& box, size_t points=1000U);
 void drawEllipse(Mat& image, const RotatedRect& box, const Scalar& color = Scalar(0,0,255));
 void drawEllipse(Mat& image, const vector<Point2d>& vertices, const Scalar& color = Scalar(0,0,255));
-void genLines(vector<pair<Point2d,Point2d>>& pairs, const vector<Point2d>& vertices, double minDist=1.0, size_t pairCount=50);
+void genLines(vector<Line>& pairs, const vector<Point2d>& vertices, double minDist=1.0, size_t pairCount=50);
 
-void genLines(vector<pair<Point2d,Point2d>>& lines, const vector<Point2d>& vertices, double minDist, size_t pairCount)
+void genLines(vector<Line>& lines, const vector<Point2d>& vertices, double minDist, size_t pairCount)
 {
    lines.resize(pairCount);
 
    for ( int i = 0; i < pairCount; ++i )
    {
-      pair<Point2d,Point2d> p;
+      Line p;
 
       int count = 0;
       do {
@@ -110,38 +115,140 @@ void drawEllipse(Mat& image, const RotatedRect& box, const Scalar& color)
 */
 }
 
-void drawLines(Mat& image, const vector<pair<Point2d,Point2d>>& lines, const Scalar& color)
+void drawLines(Mat& image, const vector<Line>& lines, const Scalar& color)
 {
-   for ( const pair<Point2d,Point2d>& p : lines )
+   for ( const Line& p : lines )
    {
       line(image, p.first, p.second, color);
    }
 }
 
+double distFunc(const Mat& first, const Mat& second)
+{
+   double sum = 0.0;
+   double m1 = first.at<FType>(first.total()-1);
+   double m2 = second.at<FType>(second.total()-1);
+   double diff;
+
+   for ( int i = 0; i < first.total()-1; ++i )
+   {
+      diff = first.at<FType>(i) - second.at<FType>(i);
+      sum += diff*diff;
+   }
+   return sum;
+}
+
+void buildFeatures(vector<Mat>& features, const Mat& image, vector<Line>& lines, int featureSize)
+{
+   features.clear();
+   features.resize(lines.size());
+
+   // features
+   // (pixel1, pixel2, pixel3 ..., pixelN) - mean
+
+   for ( size_t i = 0; i < lines.size(); ++i )
+   {
+      Mat& feat = features[i];
+      feat.create(1, featureSize, CV_FTYPE);
+
+      Point2d& p1 = lines[i].first;
+      Point2d& p2 = lines[i].second;
+
+      Point2d sample = p1;
+
+      Point2d step((p2.x - p1.x) / (featureSize - 1.0),
+                   (p2.y - p1.y) / (featureSize - 1.0));
+
+      double sum = 0.0;
+      
+      for ( int j = 0; j < featureSize-1; ++j )
+      {
+         feat.at<FType>(j) = image.at<unsigned char>(Point2i(sample.x,sample.y));
+         sum += feat.at<FType>(j);
+
+         // increment step
+         sample.x += step.x;
+         sample.y += step.y;
+      }
+
+      // store mean
+      FType mean = (FType)(sum / (featureSize - 1.0));
+      
+      // subtract mean for feat
+      feat -= mean;
+     
+      // save the old mean so we can get original value back
+      feat.at<FType>(featureSize-1) = mean;
+   }
+}
+
 int main(int argc, char *argv[])
 {
+   // ideas
+   // Blur region based on its size before sampling
+   // Reject threshold based on how many matches belonged to first vs. second class
+   //    Reject threhold for precision recall?
+
    // image of black
    Mat img = imread(argv[1]);
+   Mat grayImg;
+   cvtColor(img, grayImg, CV_RGB2GRAY);
 
    RotatedRect r(Point2f(250.0f, 250.0f), Size2f(400.0f,300.0f), 100);
 
    double threshold = min(r.size.width, r.size.height)/2.0;
 
    vector<Point2d> vertices(1000U);
-   vector<pair<Point2d,Point2d>> lines;
+   vector<Line> lines;
+   vector<Mat> features;
    
+   double featureSize = 21; // 20 samples and 1 mean stored
+
    getEllipsePoints(vertices, r, 1000U);
    genLines(lines, vertices, threshold, 50);
-   buildFeatures(image, lines);
 
    drawEllipse(img, vertices, Scalar(255,0,0));
    drawLines(img, lines, Scalar(255,255,255));
+   
+   buildFeatures(features, grayImg, lines, featureSize);
+
+
+   Mat a(1,6,CV_FTYPE);
+   Mat b(1,6,CV_FTYPE);
+   
+   a.at<FType>(0) = -20;
+   a.at<FType>(1) = -10;
+   a.at<FType>(2) = 0;
+   a.at<FType>(3) = 10;
+   a.at<FType>(4) = 20;
+   a.at<FType>(5) = 20;
+
+   b.at<FType>(0) = -40;
+   b.at<FType>(1) = -20;
+   b.at<FType>(2) = 0;
+   b.at<FType>(3) = 20;
+   b.at<FType>(4) = 40;
+   b.at<FType>(5) = 40;
+   
+   Mat c = a.clone();
+   Mat d = b.clone();
+
+   c += 20;
+   d += 40;
+
+   c.at<FType>(5) = 20;
+   d.at<FType>(5) = 40;
+
+   cout << distFunc(a, b) << endl;
+   cout << distFunc(c, d) << endl;
+   cout << distFunc(features[1], features[0]) << endl;
 
    imshow("Image", img);
    waitKey(0);
 
    return 0;
 
+#if 0
    if ( argc < 3 ) {
       cout << "Usage: " << argv[0] << " <input image> <output image>" << endl;
       return -1;
@@ -204,4 +311,5 @@ int main(int argc, char *argv[])
    waitKey(0);
 
    return 0;
+#endif
 }
