@@ -305,7 +305,7 @@ void buildFeatures(Region& region, const Mat& image, size_t lineCount,
       region.err[i] = (FType)(diffSum / (featureSize - 1.0));
 
       // subtract mean for feat
-      //feat -= region.mean[i];
+      feat -= region.mean[i];
    }
 
    region.errMax = *max_element(region.err.begin(), region.err.end());
@@ -597,8 +597,6 @@ int main(int argc, char *argv[])
    //    second is a point in the reference region
    // second (type double): CMF
 
-   cout << "HERE" << endl;
-/*
    for ( size_t i = 0; i < matches.size(); ++i )
    {
       //if ( matches[i].second > 0.4 && matches[i].second < 1 )
@@ -608,13 +606,11 @@ int main(int argc, char *argv[])
                   matches[i].first.first.y),
             Point(matches[i].first.second.x,
                   matches[i].first.second.y),
-            Scalar(50+((i * 137) % 127),
-                   50+((i * 17) % 127),
-                   50+((i * 293) % 127)),
+            Scalar(0,0,255),
             2);
       }
    }
-*/
+
    // Test homography transforms
    double M[3][3];
    Mat T(3,3,CV_64FC1);
@@ -630,7 +626,6 @@ int main(int argc, char *argv[])
       for ( int col = 0; col < 3; ++col )
          M[row][col] = T.at<double>(row,col);
 
-   cout << matches.size() << endl;
 
    int counter = 0;
    int total = 0;
@@ -656,36 +651,19 @@ int main(int argc, char *argv[])
 
       //pMatch = pMatch / pMatch.at<double>(2,0);
       double dist = sqrt((np.x-rp.x)*(np.x-rp.x) + (np.y-rp.y)*(np.y-rp.y));
-      cout << dist << endl;
 
       if ( dist < 10 ) {
          line(output,
               Point(x+refImage.size().width,y),
               Point(matches[i].first.second.x,
                     matches[i].first.second.y),
-              Scalar(50+((i * 137) % 127),
-                     50+((i * 17) % 127),
-                     50+((i * 293) % 127)),
+              Scalar(0,255,0),
               2);
          counter++;
       }
-/*
-      if ( dist < 100 )
-      {
-         line(output,
-            Point(matches[i].first.first.x+refImage.size().width,
-                  matches[i].first.first.y),
-            Point(matches[i].first.second.x,
-                  matches[i].first.second.y),
-            Scalar(50+((i * 137) % 127),
-                   50+((i * 17) % 127),
-                   50+((i * 293) % 127)),
-            2);
-      }
-      */
    }
 
-   cout << 100.0 * counter / total << "%" << endl;
+   cout << "Accuracy: " << 100.0 * counter / total << "%" << endl;
 
 
    imshow("Output", output);
