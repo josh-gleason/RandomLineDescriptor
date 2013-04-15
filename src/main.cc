@@ -19,8 +19,8 @@ struct ProgramSettings {
    struct MserSettings {
       MserSettings() :
          delta(2),
-         minArea(0.00015),
-         maxArea(0.35),
+         minArea(0.00038),
+         maxArea(0.00042),
          maxVariation(0.25),
          minDiversity(0.2)
       {}
@@ -34,13 +34,13 @@ struct ProgramSettings {
    
    struct DescriptorSettings {
       DescriptorSettings() :
-         ellipseSize(2.0),
+         ellipseSize(1.0),
          ellipsePoints(512U),
          l(32),
          Nk(150),
          N(150),
          minDist(0.25),
-         k1(1.0),
+         k1(0.3),
          p1(1.0),
          p2(1.0),
          w1(1.0),
@@ -304,7 +304,7 @@ void buildFeatures(Region& region, const Mat& image, size_t lineCount,
       region.err[i] = (FType)(diffSum / (featureSize - 1.0));
 
       // subtract mean for feat
-      feat -= region.mean[i];
+      //feat -= region.mean[i];
    }
 
    region.errMax = *max_element(region.err.begin(), region.err.end());
@@ -407,7 +407,11 @@ void findMatches(vector<Match>& matches, const vector<Region>& refRegions,
             matchDescriptors.at<FType>(i*N+j,k) =
                matchRegions[i].descriptors[j].at<FType>(0,k);
 
-   FlannBasedMatcher matcher;
+   FlannBasedMatcher matcher(new flann::KDTreeIndexParams(8));
+//   FlannBasedMatcher matcher(new flann::LinearIndexParams());
+//   FlannBasedMatcher matcher(new flann::AutotunedIndexParams(
+//      0.97, 0.01, 0, 0.1));
+//   BFMatcher matcher(NORM_L2, true);
    std::vector<DMatch> matchList;
    matcher.match(matchDescriptors, refDescriptors, matchList);
 
@@ -433,9 +437,9 @@ void findMatches(vector<Match>& matches, const vector<Region>& refRegions,
          matchDist[j] = matchList[i*N+j].distance * matchList[i*N+j].distance;
          
          // set matchRegion and matchDesc
-         matchRegion = matchIdx[j] % Nk;
-         matchDesc = matchIdx[j] / Nk;
-         
+         matchRegion = matchIdx[j] / Nk;
+         matchDesc = matchIdx[j] % Nk;
+        
          matchedRegion[j] = matchRegion;
          matchedDesc[j] = matchDesc;
          err[j] = refRegions[matchedRegion[j]].err[matchedDesc[j]];
@@ -523,7 +527,8 @@ void findMatches(vector<Match>& matches, const vector<Region>& refRegions,
       // determine matched region and if match has occured
       double CMF = (TCmax - TCmax2)/TCmax2;
       
-      if ( TCmaxIdx != 0 && TCmaxIdx2 != 0 )
+      //if ( TCmaxIdx != 0 && TCmaxIdx2 != 0 && CMF < 1.0 && CMF > 0.4 )
+      if ( CMF > 5 )
       {
          matches.push_back(
             Match(Line(
@@ -586,16 +591,20 @@ int main(int argc, char *argv[])
    //    second is a point in the reference region
    // second (type double): CMF
 
+   cout << "HERE" << endl;
+
    for ( size_t i = 0; i < matches.size(); ++i )
    {
-      if ( matches[i].second > 0.6 && matches[i].second < 1 )
+      //if ( matches[i].second > 0.4 && matches[i].second < 1 )
       {
          line(output,
             Point(matches[i].first.first.x+refImage.size().width,
                   matches[i].first.first.y),
             Point(matches[i].first.second.x,
                   matches[i].first.second.y),
-            Scalar(255,0,0),
+            Scalar(50+((i * 137) % 127),
+                   50+((i * 17) % 127),
+                   50+((i * 293) % 127)),
             2);
       }
    }
