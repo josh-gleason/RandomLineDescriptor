@@ -125,17 +125,16 @@ void drawLines(Mat& image, const vector<Line>& lines, const Scalar& color)
 
 double distFunc(const Mat& first, const Mat& second)
 {
-   double sum = 0.0;
-   double m1 = first.at<FType>(first.total()-1);
-   double m2 = second.at<FType>(second.total()-1);
-   double diff;
+   Mat diff = first - second;
 
-   for ( int i = 0; i < first.total()-1; ++i )
-   {
-      diff = first.at<FType>(i) - second.at<FType>(i);
-      sum += diff*diff;
-   }
-   return sum;
+   // square
+   diff = diff.mul(diff);
+
+   // set last element (holds the mean before normalization) to zero
+   diff.at<FType>(diff.total()-1) = 0;
+  
+   // mean is pre-subtracted
+   return sum(diff)[0];
 }
 
 void buildFeatures(vector<Mat>& features, const Mat& image, vector<Line>& lines, int featureSize)
@@ -144,7 +143,7 @@ void buildFeatures(vector<Mat>& features, const Mat& image, vector<Line>& lines,
    features.resize(lines.size());
 
    // features
-   // (pixel1, pixel2, pixel3 ..., pixelN) - mean
+   // pixel1, pixel2, pixel3 ..., pixelN, mean
 
    for ( size_t i = 0; i < lines.size(); ++i )
    {
