@@ -2,6 +2,7 @@
 #include <iostream>
 #include <tuple>
 #include <limits>
+#include <algorithm>
 
 using namespace cv;
 using namespace std;
@@ -9,6 +10,7 @@ using namespace std;
 //#define DRAW_CIRCLE
 
 typedef pair<Point2d,Point2d> Line;
+typedef pair<Line, double> Match; // matching region and CMF
 
 const int CV_FTYPE = CV_32FC1;
 typedef float FType;
@@ -381,18 +383,18 @@ void extractRegions(vector<Region>& regions, const Mat& image, const ProgramSett
    }
 }
 
-void findMatches(vector<Line>& matches, const vector<Region>& refRegions,
-   const vector<Region>& matchRegions)
+void findMatches(vector<Match>& matches, const vector<Region>& refRegions,
+   const vector<Region>& matchRegions, const ProgramSettings& settings)
 {
-   Mat refDescriptors(refRegions.size()*refRegions[0].descriptors.size(),
-      refRegions[0].descriptors[0].cols, CV_FTYPE);
-   
-   Mat matchDescriptors(matchRegions.size()*matchRegions[0].descriptors.size(),
-      matchRegions[0].descriptors[0].cols, CV_FTYPE);
+   size_t Nk = settings.descriptor.Nk; //refRegions[0].descriptors.size();
+   size_t N = settings.descriptor.N; //matchRegions[0].descriptors.size();
+   size_t l = settings.descriptor.l; //___Regions[0].descriptors[0].cols;
 
-   size_t Nk = refRegions[0].descriptors.size();
-   size_t N = matchRegions[0].descriptors.size();
+   // initialize matrices
+   Mat refDescriptors(refRegions.size()*Nk, l, CV_FTYPE);
+   Mat matchDescriptors(matchRegions.size()*N, l, CV_FTYPE);
 
+   // copy descriptors over
    for ( size_t i = 0; i < refRegions.size(); ++i )
       for ( size_t j = 0; j < Nk; ++j )
          for ( size_t k = 0; k < refRegions[i].descriptors[j].size().width; ++k )
@@ -409,7 +411,6 @@ void findMatches(vector<Line>& matches, const vector<Region>& refRegions,
    std::vector<DMatch> matchList;
    matcher.match(matchDescriptors, refDescriptors, matchList);
 
-   int count = 0;
    for ( size_t i = 0; i < matchRegions.size(); ++i )
    {
       const Region& matchReg = matchRegions[i];
@@ -417,23 +418,120 @@ void findMatches(vector<Line>& matches, const vector<Region>& refRegions,
       // will hold closest matches
       vector<long int> matchIdx(N);
       vector<double> matchDist(N);
+      vector<int> matchedRegion(N);
+      vector<int> matchedDesc(N);
+      vector<double> conf(N);
+      vector<double> err(N);
 
+      int matchRegion;
+      int matchDesc;
+      
       for ( size_t j = 0; j < N; ++j )
       {
-         const Mat& d = matchReg.descriptors[i];
-         double mean = matchReg.mean[i];
-         double err = matchReg.err[i];
-         double errMax = matchReg.errMax;
-     
+
          matchIdx[j] = matchList[i*N+j].trainIdx;
          matchDist[j] = matchList[i*N+j].distance * matchList[i*N+j].distance;
+         
+         // set matchRegion and matchDesc
+         matchRegion = matchIdx[j] % Nk;
+         matchDesc = matchIdx[j] / Nk;
+         
+         matchedRegion[j] = matchRegion;
+         matchedDesc[j] = matchDesc;
+         err[j] = refRegions[matchedRegion[j]].err[matchedDesc[j]];
       }
 
       // now compute region matches and confidence
+      double Dmax = matchDist[0];
+      double Dmin = Dmax;
+
+      double errMax = err[0]; 
+      
+      for ( size_t j = 1; j < N; ++j )
+      {
+         // get Dmax
+         if ( matchDist[j] > Dmax )
+            Dmax = matchDist[j];
+         if ( matchDist[j] < Dmin )
+            Dmin = matchDist[j];
+         if ( err[j] > errMax )
+            errMax = err[j]; 
+      }
+
+      // multiply by k1
+      Dmax *= settings.descriptor.k1;
+      
+      double p1 = settings.descriptor.p1;
+      double p2 = settings.descriptor.p2;
+      double w1 = settings.descriptor.w1;
+      double w2 = settings.descriptor.w2;
+
+      // compute confidence
+      for ( size_t j = 0; j < N; ++j )
+      {
+         double Dj = matchDist[j];
+         double errj = err[j];
+         if ( matchDist[j] > Dmax ) {
+            conf[j] = 0;
+         } else {
+            conf[j] = pow(w1 * (Dmax - Dj)/(Dmax - Dmin), p1)*
+                      pow(w2 * errj / errMax, p2);
+         }
+      }
+
+      // TC holds the total confidence (sum) for all lines matched to
+      // a class.  TCidx holds the indices of which classes TC is refering
+      // to.
+      vector<double> TC;
+      vector<int> TCidx;
+
+      // compute TC for matched found classes
+      for ( size_t j = 0; j < N; ++j )
+      {
+         if ( count(TCidx.begin(), TCidx.end(), matchedRegion[j]) == 0 ) {
+            TC.push_back(conf[j]);
+            TCidx.push_back(matchedRegion[j]);
+         } else { // already exists
+            size_t k = 0;
+            while ( TCidx[k] != matchedRegion[j] ) {
+               ++k;
+            }
+            TC[k] += conf[j];
+         }
+      }
    
+      // find max and second max TC
+      double TCmax = TC[0];
+      int TCmaxIdx = TCidx[0];
+      double TCmax2 = TCmax;
+      int TCmaxIdx2 = TCmaxIdx;
+      
+      for ( size_t j = 0; j < TCidx.size(); ++j )
+      {
+         if ( TC[j] > TCmax )
+         {
+            TCmax2 = TCmax;
+            TCmaxIdx2 = TCmaxIdx2;
+            TCmax = TC[j];
+            TCmaxIdx = TCidx[j];
+         } else if ( TC[j] > TCmax2 ) {
+            TCmax2 = TC[j];
+            TCmaxIdx = TCidx[j];
+         }
+      }
+
+      // determine matched region and if match has occured
+      double CMF = (TCmax - TCmax2)/TCmax2;
+      
+      if ( TCmaxIdx != 0 && TCmaxIdx2 != 0 )
+      {
+         matches.push_back(
+            Match(Line(
+               Point2d(matchRegions[i].ellipse.center.x, matchRegions[i].ellipse.center.y),
+               Point2d(refRegions[TCmaxIdx].ellipse.center.x, refRegions[TCmaxIdx].ellipse.center.y)),
+               CMF));
+      }
    }
-
-
 }
 
 int main(int argc, char *argv[])
@@ -445,12 +543,11 @@ int main(int argc, char *argv[])
 
    srand(time(0));
    
-//   if ( argc < 4 ) {
-   if ( argc < 1 ) {
+   if ( argc < 4 ) {
       cout << "Usage: " << argv[0] << " <input image> <match image> <output image>" << endl;
       return -1;
    }
-
+   
    // TODO Load settings from file
    ProgramSettings settings;
 
@@ -459,23 +556,51 @@ int main(int argc, char *argv[])
    settings.mser.maxArea = 0.35;
    settings.mser.maxVariation = 0.25;
    settings.mser.minDiversity = 0.2;
-
+   
    // images
    Mat refImage = imread(argv[1]);
-   Mat matchImage = imread(argv[1]);
-
+   Mat matchImage = imread(argv[2]);
+   
    vector<Region> refRegions, matchRegions;
    
    extractRegions(refRegions, refImage, settings, true);
    extractRegions(matchRegions, matchImage, settings, false);
 
-   vector<Line> matches;
+   vector<Match> matches;
 
    // find matching regions
-   findMatches(matches, refRegions, matchRegions);
+   findMatches(matches, refRegions, matchRegions, settings);
+   
+   // initialize output results
+   Mat output(max(refImage.size().height, matchImage.size().height),
+              refImage.size().width+matchImage.size().width,
+              CV_8UC3, Scalar(0,0,0));
 
-   cout << matches.size() << endl;
+   // reference image
+   refImage.copyTo(output(Rect(0,0,refImage.size().width, refImage.size().height)));
+   matchImage.copyTo(output(Rect(refImage.size().width,0,matchImage.size().width, matchImage.size().height)));
 
+   // matches
+   // first (type Line): (pair<Point2d,Point2d>) 
+   //    first is a point in the matched region
+   //    second is a point in the reference region
+   // second (type double): CMF
+
+   for ( size_t i = 0; i < matches.size(); ++i )
+   {
+      if ( matches[i].second > 0.6 && matches[i].second < 1 )
+      {
+         line(output,
+            Point(matches[i].first.first.x+refImage.size().width,
+                  matches[i].first.first.y),
+            Point(matches[i].first.second.x,
+                  matches[i].first.second.y),
+            Scalar(255,0,0),
+            2);
+      }
+   }
+
+   imshow("Output", output);
    waitKey(0);
 
    return 0;
