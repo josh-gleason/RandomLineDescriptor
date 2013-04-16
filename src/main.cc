@@ -5,72 +5,16 @@
 #include <algorithm>
 #include <fstream>
 
+#include "settings.h"
+
 using namespace cv;
 using namespace std;
-
-//#define DRAW_CIRCLE
 
 typedef pair<Point2d,Point2d> Line;
 typedef pair<Line, double> Match; // matching region and CMF
 
 const int CV_FTYPE = CV_32FC1;
 typedef float FType;
-
-struct ProgramSettings {
-   struct MserSettings {
-      MserSettings() :
-         delta(2),
-         minArea(0.00038),
-         maxArea(0.00052),
-         maxVariation(0.25),
-         minDiversity(0.2)
-      {}
-
-      int delta;
-      double minArea;
-      double maxArea;
-      double maxVariation;
-      double minDiversity;
-   };
-   
-   struct DescriptorSettings {
-      DescriptorSettings() :
-         ellipseSize(1.0),
-         ellipsePoints(512U),
-         l(32),
-         Nk(150),
-         N(150),
-         minDist(0.25),
-         k1(0.3),
-         p1(1.0),
-         p2(1.0),
-         w1(1.0),
-         w2(1.0),
-         smoothing(4.0)
-      {}
-
-      double ellipseSize;  // scale factor of ellipse to min bounding box
-      size_t ellipsePoints;   // number of points to sample around perimeter of ellipse
-
-      int l;   // number of points per line
-      int Nk;  // number of lines per region in reference region
-      int N;   // number of lines per region in test region
-
-      double minDist; // minimum allowed length of line (with respect to sqrt(area) of region)
-
-      double k1;  // Dmax weighting (0,1]
-      double p1;  // controls shape of confidence function
-      double p2;  // controls shape of confidence function
-      double w1;  // weight for distance
-      double w2;  // weight for error
-
-      double smoothing; // strength of smoothing (relative to scale of region)
-   };
-
-   MserSettings mser;
-   
-   DescriptorSettings descriptor;
-};
 
 struct Region {
    RotatedRect ellipse;
@@ -274,6 +218,10 @@ void buildFeatures(Region& region, const Mat& image, size_t lineCount,
          p2.y = center.y + radius*sin(theta2);
       } while (sqrt((p1.x-p2.x)*(p1.x-p2.x)+(p1.y-p2.y)*(p1.y-p2.y)) < minDist);
 
+#ifdef DRAW_CIRCLE
+      // draw line
+      line(normImg, p1, p2, Scalar(0,0,0), 1);
+#endif
       // save the lines in case they are needed later
       region.lines[i] = Line(p1,p2);
 
@@ -307,6 +255,11 @@ void buildFeatures(Region& region, const Mat& image, size_t lineCount,
       // subtract mean for feat
       feat -= region.mean[i];
    }
+   
+#ifdef DRAW_CIRCLE
+   imshow("ImageRegion", normImg);
+   waitKey(0);
+#endif
 
    region.errMax = *max_element(region.err.begin(), region.err.end());
 }
@@ -339,8 +292,8 @@ void extractRegions(vector<Region>& regions, const Mat& image, const ProgramSett
    // Construct an MSER detector
    MserFeatureDetector mserDetector(
       settings.mser.delta,
-      settings.mser.minArea * image.size().area(),
-      settings.mser.maxArea * image.size().area(),
+      settings.mser.minArea, // * image.size().area(),
+      settings.mser.maxArea, // * image.size().area(),
       settings.mser.maxVariation,
       settings.mser.minDiversity);
 
@@ -356,7 +309,8 @@ void extractRegions(vector<Region>& regions, const Mat& image, const ProgramSett
       box.size.height *= settings.descriptor.ellipseSize;
       // TODO reject very high eccentricity regions
       if ( (Rect(Point(0,0), image.size()) & box.boundingRect()).size() ==
-            box.boundingRect().size() )
+            box.boundingRect().size() &&
+            (double)max(box.size.width,box.size.height) / min(box.size.width,box.size.height) < 3.0)
       {
 //         drawEllipse( image, box, Scalar(255, 0, 0) );
          ellipses.push_back(box);
@@ -489,6 +443,7 @@ void findMatches(vector<Match>& matches, const vector<Region>& refRegions,
       // to.
       vector<double> TC;
       vector<int> TCidx;
+      vector<int> TCcount;
 
       // compute TC for matched found classes
       for ( size_t j = 0; j < N; ++j )
@@ -496,12 +451,14 @@ void findMatches(vector<Match>& matches, const vector<Region>& refRegions,
          if ( count(TCidx.begin(), TCidx.end(), matchedRegion[j]) == 0 ) {
             TC.push_back(conf[j]);
             TCidx.push_back(matchedRegion[j]);
+            TCcount.push_back(1);
          } else { // already exists
             size_t k = 0;
             while ( TCidx[k] != matchedRegion[j] ) {
                ++k;
             }
             TC[k] += conf[j];
+            TCcount[k]++;
          }
       }
    
@@ -510,7 +467,8 @@ void findMatches(vector<Match>& matches, const vector<Region>& refRegions,
       int TCmaxIdx = TCidx[0];
       double TCmax2 = TCmax;
       int TCmaxIdx2 = TCmaxIdx;
-      
+      int TCmaxCount = TCcount[0];
+
       for ( size_t j = 0; j < TCidx.size(); ++j )
       {
          if ( TC[j] > TCmax )
@@ -519,6 +477,8 @@ void findMatches(vector<Match>& matches, const vector<Region>& refRegions,
             TCmaxIdx2 = TCmaxIdx2;
             TCmax = TC[j];
             TCmaxIdx = TCidx[j];
+            
+            TCmaxCount = TCcount[j];
          } else if ( TC[j] > TCmax2 ) {
             TCmax2 = TC[j];
             TCmaxIdx = TCidx[j];
@@ -534,8 +494,12 @@ void findMatches(vector<Match>& matches, const vector<Region>& refRegions,
       double dist = sqrt((pt1.x-pt2.x)*(pt1.x-pt2.x)+(pt1.y-pt2.y)*(pt1.y-pt2.y));
 
       //if ( TCmaxIdx != 0 && TCmaxIdx2 != 0 && CMF < 1.0 && CMF > 0.4 )
-      if ( dist < 5 || CMF > 0.8 )
+      if ( TCmaxCount > N/15 && (CMF > 0.7 || dist < 5 ) )
+      //if ( (CMF > 0.7 || dist < 5 ) )
       {
+         if (refRegions[i].errMax < 5)
+            return;
+
          matches.push_back(
             Match(Line(
                Point2d(matchRegions[i].ellipse.center.x, matchRegions[i].ellipse.center.y),
@@ -554,19 +518,13 @@ int main(int argc, char *argv[])
 
    srand(time(0));
    
-   if ( argc < 4 ) {
-      cout << "Usage: " << argv[0] << " <input image> <match image> <output image>" << endl;
+   if ( argc < 5 ) {
+      cout << "Usage: " << argv[0] << " <input image> <match image> <homography transform> <output image>" << endl;
       return -1;
    }
    
    // TODO Load settings from file
    ProgramSettings settings;
-
-   settings.mser.delta = 2;
-   settings.mser.minArea = 0.00015;
-   settings.mser.maxArea = 0.35;
-   settings.mser.maxVariation = 0.25;
-   settings.mser.minDiversity = 0.2;
    
    // images
    Mat refImage = imread(argv[1]);
@@ -665,9 +623,10 @@ int main(int argc, char *argv[])
 
    cout << "Accuracy: " << 100.0 * counter / total << "%" << endl;
 
-
    imshow("Output", output);
    waitKey(0);
+
+   imwrite(argv[4], output);
 
    return 0;
 }

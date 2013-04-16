@@ -3,7 +3,7 @@ LIBS=`pkg-config opencv --libs`
 
 all: bin/main
 
-bin/main: src/main.cc Makefile
+bin/main: src/main.cc src/settings.h Makefile
 	g++ ${FLAGS} src/main.cc ${LIBS} -o bin/main
 
 bin/test: src/mser/test.cpp Makefile
