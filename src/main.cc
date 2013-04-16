@@ -10,6 +10,8 @@
 using namespace cv;
 using namespace std;
 
+#define MIN_MEAN_ERR (5 * 32.0/settings.descriptor.l)
+
 typedef pair<Point2d,Point2d> Line;
 typedef pair<Line, double> Match; // matching region and CMF
 
@@ -322,6 +324,7 @@ void extractRegions(vector<Region>& regions, const Mat& image, const ProgramSett
 
    const ProgramSettings::DescriptorSettings& s = settings.descriptor;
    
+   vector<int> badRegions;
    for ( int i = 0; i < ellipses.size(); ++i )
    {
       RotatedRect& r = ellipses[i];
@@ -331,7 +334,22 @@ void extractRegions(vector<Region>& regions, const Mat& image, const ProgramSett
       } else {
          buildFeatures(regions[i], grayImage, s.N, s.l, s.smoothing, s.minDist);
       }
+      double sum = 0.0;
+      for ( double e : regions[i].err )
+         sum += e;
+      sum /= regions[i].err.size();
+
+      if ( sum < MIN_MEAN_ERR )
+      {
+         // reject
+         badRegions.push_back(i);
+      }
    }
+
+   cout << "Removed " << badRegions.size() << " Regions" << endl;
+   for ( int i = 0; i < badRegions.size(); ++i )
+      regions.erase(regions.begin() + (badRegions[i] - i));
+
 }
 
 void findMatches(vector<Match>& matches, const vector<Region>& refRegions,
@@ -348,22 +366,16 @@ void findMatches(vector<Match>& matches, const vector<Region>& refRegions,
    // copy descriptors over
    for ( size_t i = 0; i < refRegions.size(); ++i )
       for ( size_t j = 0; j < Nk; ++j )
-         for ( size_t k = 0; k < refRegions[i].descriptors[j].size().width; ++k )
-            refDescriptors.at<FType>(i*N+j,k) =
-               refRegions[i].descriptors[j].at<FType>(0,k);
-
+         refRegions[i].descriptors[j].copyTo(
+            refDescriptors.row(i*Nk+j));
+   
    for ( size_t i = 0; i < matchRegions.size(); ++i )
       for ( size_t j = 0; j < N; ++j )
-         for ( size_t k = 0; k < matchRegions[i].descriptors[j].size().width; ++k )
-            matchDescriptors.at<FType>(i*N+j,k) =
-               matchRegions[i].descriptors[j].at<FType>(0,k);
-
-   FlannBasedMatcher matcher(new flann::KDTreeIndexParams(2));
-   //FlannBasedMatcher matcher(new flann::KDTreeIndexParams(8));
-//   FlannBasedMatcher matcher(new flann::LinearIndexParams());
-//   FlannBasedMatcher matcher(new flann::AutotunedIndexParams(
-//      0.97, 0.01, 0, 0.1));
-//   BFMatcher matcher(NORM_L2, true);
+         matchRegions[i].descriptors[j].copyTo(
+            matchDescriptors.row(i*N+j));
+   
+   // Create matcher and match
+   FlannBasedMatcher matcher(new flann::KDTreeIndexParams(4));
    std::vector<DMatch> matchList;
    matcher.match(matchDescriptors, refDescriptors, matchList);
 
@@ -386,7 +398,7 @@ void findMatches(vector<Match>& matches, const vector<Region>& refRegions,
       {
 
          matchIdx[j] = matchList[i*N+j].trainIdx;
-         matchDist[j] = matchList[i*N+j].distance; // * matchList[i*N+j].distance;
+         matchDist[j] = matchList[i*N+j].distance;
          
          // set matchRegion and matchDesc
          matchRegion = matchIdx[j] / Nk;
@@ -490,13 +502,11 @@ void findMatches(vector<Match>& matches, const vector<Region>& refRegions,
       Point2d pt2(refRegions[TCmaxIdx2].ellipse.center.y, refRegions[TCmaxIdx2].ellipse.center.y);
       double dist = sqrt((pt1.x-pt2.x)*(pt1.x-pt2.x)+(pt1.y-pt2.y)*(pt1.y-pt2.y));
 
-      //if ( TCmaxIdx != 0 && TCmaxIdx2 != 0 && CMF < 1.0 && CMF > 0.4 )
-      if ( TCmaxCount > N/15 && (CMF > 0.5 || dist < 5 ) )
-      //if ( (CMF > 0.7 || dist < 5 ) )
+      if ( TCmaxCount > N/20 && ( CMF > 0.6 || dist < 5 ) )
       {
-         if (refRegions[i].errMax < 6)
-            return;
-
+//         if (refRegions[i].errMax < 6)
+//            continue;
+         
          matches.push_back(
             Match(Line(
                Point2d(matchRegions[i].ellipse.center.x, matchRegions[i].ellipse.center.y),
