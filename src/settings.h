@@ -5,7 +5,7 @@ struct ProgramSettings {
    struct MserSettings {
       MserSettings() :
          delta(1),
-         minArea(400),
+         minArea(200),
          maxArea(14400),
          maxVariation(1.0),
          minDiversity(0.0)
@@ -41,16 +41,19 @@ struct ProgramSettings {
       DescriptorSettings() :
          ellipseSize(2.0),
          ellipsePoints(512U),
-         l(16),
-         Nk(200),
-         N(100),
+         //l(16),      // 16 for graf
+         //Nk(250),    // 250 for graf
+         //N(100),     // 100 for graf
+         l(32),
+         Nk(350),
+         N(300),
          minDist(0.01),
-         k1(1.0),
+         k1(0.6),
          p1(0.7),
          p2(0.4),
          w1(1.0),
          w2(1.0),
-         smoothing(0)//2.5)
+         smoothing(0.0)//2.5)
       {}
 
       double ellipseSize;  // scale factor of ellipse to min bounding box

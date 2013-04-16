@@ -12,6 +12,9 @@ using namespace std;
 
 #define MIN_MEAN_ERR 0
 //(5 * 32.0/settings.descriptor.l)
+#define CUBIC_INTERPOLATION
+
+#define MAX_REGIONS 1024
 
 typedef pair<Point2d,Point2d> Line;
 typedef pair<Line, double> Match; // matching region and CMF
@@ -169,8 +172,11 @@ void buildFeatures(Region& region, const Mat& image, size_t lineCount,
    // transform image
    Mat normImg(imageSize, imageSize, image.type());
    warpAffine(image, normImg, transform, Size(imageSize, imageSize),
+#ifdef CUBIC_INTERPOLATION
+              INTER_CUBIC, BORDER_REFLECT);
+#else
               INTER_LINEAR, BORDER_REFLECT);
-
+#endif
    // smoooth image
    if ( smoothing > 0.0 )
       GaussianBlur(normImg, normImg, Size(ksize,ksize), smoothing);
@@ -304,6 +310,9 @@ void extractRegions(vector<Region>& regions, const Mat& image, const ProgramSett
 
    mserDetector(grayImage, keypoints);
 
+   // shuffle keypoints
+   random_shuffle(keypoints.begin(),keypoints.end());
+
    size_t regionCount = 0;
    vector<RotatedRect> ellipses;
    for ( const vector<Point>& contour : keypoints ) {
@@ -316,7 +325,10 @@ void extractRegions(vector<Region>& regions, const Mat& image, const ProgramSett
          == box.boundingRect().size())
       {
          ellipses.push_back(box);
+         regionCount++;
       }
+      if (regionCount > MAX_REGIONS)
+         break;;
    }
 
    ///////// Build descriptors
