@@ -7,7 +7,7 @@ struct ProgramSettings {
          delta(5),
          minArea(60),
          maxArea(14400),
-         maxVariation(0.25),
+         maxVariation(0.4),
          minDiversity(0.2)
       {}
 
@@ -41,10 +41,10 @@ struct ProgramSettings {
       DescriptorSettings() :
          ellipseSize(2.0),
          ellipsePoints(512U),
-         l(32),
-         Nk(550),
-         N(550),
-         minDist(0.30),
+         l(16),
+         Nk(450),
+         N(450),
+         minDist(0.25),
          k1(0.5),
          p1(1.0),
          p2(1.0),

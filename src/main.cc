@@ -494,7 +494,7 @@ void findMatches(vector<Match>& matches, const vector<Region>& refRegions,
       double dist = sqrt((pt1.x-pt2.x)*(pt1.x-pt2.x)+(pt1.y-pt2.y)*(pt1.y-pt2.y));
 
       //if ( TCmaxIdx != 0 && TCmaxIdx2 != 0 && CMF < 1.0 && CMF > 0.4 )
-      if ( TCmaxCount > N/15 && (CMF > 0.7 || dist < 5 ) )
+      if ( TCmaxCount > N/15 && (CMF > 0.5 || dist < 5 ) )
       //if ( (CMF > 0.7 || dist < 5 ) )
       {
          if (refRegions[i].errMax < 6)
