@@ -10,7 +10,8 @@
 using namespace cv;
 using namespace std;
 
-#define MIN_MEAN_ERR (5 * 32.0/settings.descriptor.l)
+#define MIN_MEAN_ERR 0
+//(5 * 32.0/settings.descriptor.l)
 
 typedef pair<Point2d,Point2d> Line;
 typedef pair<Line, double> Match; // matching region and CMF
