@@ -497,7 +497,7 @@ void findMatches(vector<Match>& matches, const vector<Region>& refRegions,
       if ( TCmaxCount > N/15 && (CMF > 0.7 || dist < 5 ) )
       //if ( (CMF > 0.7 || dist < 5 ) )
       {
-         if (refRegions[i].errMax < 5)
+         if (refRegions[i].errMax < 6)
             return;
 
          matches.push_back(
