@@ -4,11 +4,11 @@
 struct ProgramSettings {
    struct MserSettings {
       MserSettings() :
-         delta(5),
+         delta(1),
          minArea(60),
          maxArea(14400),
          maxVariation(0.4),
-         minDiversity(0.2)
+         minDiversity(0.0)
       {}
 
       int delta;
@@ -41,7 +41,7 @@ struct ProgramSettings {
       DescriptorSettings() :
          ellipseSize(2.0),
          ellipsePoints(512U),
-         l(32),
+         l(20),
          Nk(450),
          N(450),
          minDist(0.25),
