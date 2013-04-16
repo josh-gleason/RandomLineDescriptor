@@ -307,12 +307,11 @@ void extractRegions(vector<Region>& regions, const Mat& image, const ProgramSett
       RotatedRect box = minAreaRect(contour);
       box.size.width *= settings.descriptor.ellipseSize;
       box.size.height *= settings.descriptor.ellipseSize;
+
       // TODO reject very high eccentricity regions
-      if ( (Rect(Point(0,0), image.size()) & box.boundingRect()).size() ==
-            box.boundingRect().size() &&
-            (double)max(box.size.width,box.size.height) / min(box.size.width,box.size.height) < 3.0)
+      if ((Rect(Point(0,0), image.size()) & box.boundingRect()).size()
+         == box.boundingRect().size())
       {
-//         drawEllipse( image, box, Scalar(255, 0, 0) );
          ellipses.push_back(box);
       }
    }
@@ -323,15 +322,12 @@ void extractRegions(vector<Region>& regions, const Mat& image, const ProgramSett
 
    const ProgramSettings::DescriptorSettings& s = settings.descriptor;
    
-   long int baseIdx = 0;
    for ( int i = 0; i < ellipses.size(); ++i )
    {
       RotatedRect& r = ellipses[i];
       regions[i].ellipse = r;
       if ( referenceImage ) {
          buildFeatures(regions[i], grayImage, s.Nk, s.l, s.smoothing, s.minDist);
-         regions[i].baseIdx = baseIdx;
-         baseIdx += s.Nk;
       } else {
          buildFeatures(regions[i], grayImage, s.N, s.l, s.smoothing, s.minDist);
       }
@@ -362,7 +358,8 @@ void findMatches(vector<Match>& matches, const vector<Region>& refRegions,
             matchDescriptors.at<FType>(i*N+j,k) =
                matchRegions[i].descriptors[j].at<FType>(0,k);
 
-   FlannBasedMatcher matcher(new flann::KDTreeIndexParams(8));
+   FlannBasedMatcher matcher(new flann::KDTreeIndexParams(2));
+   //FlannBasedMatcher matcher(new flann::KDTreeIndexParams(8));
 //   FlannBasedMatcher matcher(new flann::LinearIndexParams());
 //   FlannBasedMatcher matcher(new flann::AutotunedIndexParams(
 //      0.97, 0.01, 0, 0.1));
@@ -389,7 +386,7 @@ void findMatches(vector<Match>& matches, const vector<Region>& refRegions,
       {
 
          matchIdx[j] = matchList[i*N+j].trainIdx;
-         matchDist[j] = matchList[i*N+j].distance * matchList[i*N+j].distance;
+         matchDist[j] = matchList[i*N+j].distance; // * matchList[i*N+j].distance;
          
          // set matchRegion and matchDesc
          matchRegion = matchIdx[j] / Nk;
