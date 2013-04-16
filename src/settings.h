@@ -41,7 +41,7 @@ struct ProgramSettings {
       DescriptorSettings() :
          ellipseSize(2.0),
          ellipsePoints(512U),
-         l(16),
+         l(32),
          Nk(450),
          N(450),
          minDist(0.25),
