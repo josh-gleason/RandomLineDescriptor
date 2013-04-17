@@ -10,11 +10,7 @@
 using namespace cv;
 using namespace std;
 
-#define MIN_MEAN_ERR 0
-//(5 * 32.0/settings.descriptor.l)
 #define CUBIC_INTERPOLATION
-
-#define MAX_REGIONS 1024
 
 typedef pair<Point2d,Point2d> Line;
 typedef pair<Line, double> Match; // matching region and CMF
@@ -301,8 +297,8 @@ void extractRegions(vector<Region>& regions, const Mat& image, const ProgramSett
    // Construct an MSER detector
    MserFeatureDetector mserDetector(
       settings.mser.delta,
-      settings.mser.minArea, // * image.size().area(),
-      settings.mser.maxArea, // * image.size().area(),
+      settings.mser.minArea * (settings.mser.useRelativeArea ? image.size().area() : 1.0),
+      settings.mser.maxArea * (settings.mser.useRelativeArea ? image.size().area() : 1.0),
       settings.mser.maxVariation,
       settings.mser.minDiversity);
 
@@ -327,7 +323,7 @@ void extractRegions(vector<Region>& regions, const Mat& image, const ProgramSett
          ellipses.push_back(box);
          regionCount++;
       }
-      if (regionCount > MAX_REGIONS)
+      if (regionCount > settings.mser.maxRegions)
          break;;
    }
 
@@ -343,16 +339,16 @@ void extractRegions(vector<Region>& regions, const Mat& image, const ProgramSett
       RotatedRect& r = ellipses[i];
       regions[i].ellipse = r;
       if ( referenceImage ) {
-         buildFeatures(regions[i], grayImage, s.Nk, s.l, s.smoothing, s.minDist);
+         buildFeatures(regions[i], grayImage, s.Nk, s.l, (s.smoothRegion ? s.smoothing : 0), s.minDist);
       } else {
-         buildFeatures(regions[i], grayImage, s.N, s.l, s.smoothing, s.minDist);
+         buildFeatures(regions[i], grayImage, s.N, s.l, (s.smoothRegion ? s.smoothing : 0), s.minDist);
       }
       double sum = 0.0;
       for ( double e : regions[i].err )
          sum += e;
       sum /= regions[i].err.size();
 
-      if ( sum < MIN_MEAN_ERR )
+      if ( sum < settings.descriptor.minMeanErr )
       {
          // reject
          badRegions.push_back(i);
@@ -363,14 +359,15 @@ void extractRegions(vector<Region>& regions, const Mat& image, const ProgramSett
    for ( int i = 0; i < badRegions.size(); ++i )
       regions.erase(regions.begin() + (badRegions[i] - i));
 
+   cout << "Detected " << regions.size() << " Regions" << endl;
 }
 
 void findMatches(vector<Match>& matches, const vector<Region>& refRegions,
    const vector<Region>& matchRegions, const ProgramSettings& settings)
 {
-   size_t Nk = settings.descriptor.Nk; //refRegions[0].descriptors.size();
-   size_t N = settings.descriptor.N; //matchRegions[0].descriptors.size();
-   size_t l = settings.descriptor.l; //___Regions[0].descriptors[0].cols;
+   size_t Nk = settings.descriptor.Nk;
+   size_t N = settings.descriptor.N;
+   size_t l = settings.descriptor.l;
 
    // initialize matrices
    Mat refDescriptors(refRegions.size()*Nk, l, CV_FTYPE);
@@ -388,7 +385,7 @@ void findMatches(vector<Match>& matches, const vector<Region>& refRegions,
             matchDescriptors.row(i*N+j));
    
    // Create matcher and match
-   FlannBasedMatcher matcher(new flann::KDTreeIndexParams(4));
+   FlannBasedMatcher matcher(new flann::KDTreeIndexParams(settings.descriptor.kdTrees));
    std::vector<DMatch> matchList;
    matcher.match(matchDescriptors, refDescriptors, matchList);
 
@@ -515,11 +512,10 @@ void findMatches(vector<Match>& matches, const vector<Region>& refRegions,
       Point2d pt2(refRegions[TCmaxIdx2].ellipse.center.y, refRegions[TCmaxIdx2].ellipse.center.y);
       double dist = sqrt((pt1.x-pt2.x)*(pt1.x-pt2.x)+(pt1.y-pt2.y)*(pt1.y-pt2.y));
 
-      if ( TCmaxCount > N/20 && ( CMF > 0.6 || dist < 5 ) )
+      if ( TCmaxCount > N * settings.descriptor.minMatches &&
+           ( CMF > settings.descriptor.minCmf ||
+             dist < settings.descriptor.maxDist ))
       {
-//         if (refRegions[i].errMax < 6)
-//            continue;
-         
          matches.push_back(
             Match(Line(
                Point2d(matchRegions[i].ellipse.center.x, matchRegions[i].ellipse.center.y),
@@ -531,24 +527,21 @@ void findMatches(vector<Match>& matches, const vector<Region>& refRegions,
 
 int main(int argc, char *argv[])
 {
+   ProgramSettings settings;
+  
+   // load settings
+   if ( !parseSettings(argc, argv, settings) )
+      return -1;
+
    // ideas
-   // Blur region based on its size before sampling
    // Reject threshold based on how many matches belonged to first vs. second class
    //    Reject threhold for precision recall?
 
    srand(time(0));
    
-   if ( argc < 5 ) {
-      cout << "Usage: " << argv[0] << " <input image> <match image> <homography transform> <output image>" << endl;
-      return -1;
-   }
-   
-   // TODO Load settings from file
-   ProgramSettings settings;
-   
    // images
-   Mat refImage = imread(argv[1]);
-   Mat matchImage = imread(argv[2]);
+   Mat refImage = imread(settings.refImage);
+   Mat matchImage = imread(settings.matchImage);
    
    vector<Region> refRegions, matchRegions;
    
@@ -592,7 +585,7 @@ int main(int argc, char *argv[])
    // Test homography transforms
    double M[3][3];
    Mat T(3,3,CV_64FC1);
-   ifstream fin(argv[3]);
+   ifstream fin(settings.homographyFile);
    for ( int row = 0; row < 3; ++row )
       for ( int col = 0; col < 3; ++col )
          fin >> T.at<double>(row,col);
@@ -641,12 +634,29 @@ int main(int argc, char *argv[])
       }
    }
 
-   cout << "Accuracy: " << 100.0 * counter / total << "%" << endl;
+   double accuracy = 100.0 * counter / total;
 
-   imshow("Output", output);
-   waitKey(0);
+   cout << "Accuracy: " << accuracy << "%" << endl;
+   cout << "Total Correct: " << counter << endl;
+   cout << "Total Matches: " << total << endl;
 
-   imwrite(argv[4], output);
+   if ( settings.saveImage || settings.saveConfig ) {
+      string outputName = buildOutputString(settings.outputLocation, accuracy);
+
+      if ( settings.saveImage ) {
+         cout << "Writing output image to " << outputName << ".jpg" << endl;
+         imwrite(outputName + ".jpg", output);
+      }
+
+      if ( settings.saveConfig )
+         cout << "Writing config file to " << outputName << ".cfg" << endl;
+         writeConfig(outputName + ".cfg", settings); 
+   }
+
+   if ( settings.showImage ) {
+      imshow("Output", output);
+      waitKey(0);
+   }
 
    return 0;
 }

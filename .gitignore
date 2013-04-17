@@ -1,4 +1,6 @@
-bin/*
+bin
+Results
+build
 *.swp
 *.jpg
 temp
