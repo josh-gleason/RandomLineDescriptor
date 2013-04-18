@@ -115,10 +115,11 @@ void getEllipsePoints(vector<Point2d>& vertices, const RotatedRect& box, size_t 
    double b = r.size.width / 2.0;
    
    double step = 2 * M_PI / points;
-   double theta = 0.0;
+   double theta = 2 * M_PI;
 
    double bCos, aSin, radius;
 
+   // clockwise to make area work with boost
    vertices.resize(points);
    for ( size_t i = 0; i < points; ++i )
    {
@@ -130,7 +131,7 @@ void getEllipsePoints(vector<Point2d>& vertices, const RotatedRect& box, size_t 
          r.center.x + radius * cos(theta+r.angle),
          r.center.y + radius * sin(theta+r.angle));
 
-      theta += step;
+      theta -= step;
    }
 
 }
@@ -557,12 +558,13 @@ void findMatches(vector<Match>& matches, const vector<Region>& refRegions,
    }
 }
 
-double getMatchScore(const RotatedRect& refEllipse, const RotatedRect& matchEllipse, const Mat& T, Mat& output)
+double getMatchScore(const RotatedRect& refEllipse, const RotatedRect& matchEllipse, Mat& T, const ProgramSettings& settings)
 {
 //   typedef bg::model::d2::point_xy<double> pt_xy;
    typedef bg::model::polygon<bg::model::d2::point_xy<double>> polygon;
 
    double ellipseUnion, ellipseIntersect;
+   double x, y;
 
    // transform match to reference
    double M11 = T.at<double>(0,0);
@@ -580,56 +582,25 @@ double getMatchScore(const RotatedRect& refEllipse, const RotatedRect& matchElli
    deque<polygon> unionPoly;
    deque<polygon> intersectPoly;
    
-   vector<Point2d> matchEllipsePts(564U);
-   vector<Point2d> refEllipsePts(564U);
+   vector<Point2d> matchEllipsePts(64U);
+   vector<Point2d> refEllipsePts(64U);
 
    // compute points
-   getEllipsePoints(matchEllipsePts, matchEllipse, 564U);
-   getEllipsePoints(refEllipsePts, refEllipse, 564U);
-
-   Mat m;
-   output.copyTo(m);
-
-   vector<Point2d> matchEllipsePts2(matchEllipsePts.size());
-   for ( int i = 0; i < matchEllipsePts2.size(); ++i ) {
-      matchEllipsePts2[i].x = output.size().width/2 + matchEllipsePts[i].x;
-      matchEllipsePts2[i].y = matchEllipsePts[i].y;
-   }
-
-   drawEllipse(m, matchEllipsePts2, Scalar(255,0,0));  //blue
-   drawEllipse(m, refEllipsePts, Scalar(0,0,255));    //red
+   getEllipsePoints(matchEllipsePts, matchEllipse, 64U);
+   getEllipsePoints(refEllipsePts, refEllipse, 64U);
 
    // transform match to reference image
    for ( Point2d& pt : matchEllipsePts )
    {
-      pt.x = (pt.x*M11 + pt.y*M12 + M13) / (pt.x*M31 + pt.y*M32 + M33);
-      pt.y = (pt.x*M21 + pt.y*M22 + M23) / (pt.x*M31 + pt.y*M32 + M33);
+      x = pt.x;
+      y = pt.y;
+
+      pt.x = (x*M11 + y*M12 + M13) / (x*M31 + y*M32 + M33);
+      pt.y = (x*M21 + y*M22 + M23) / (x*M31 + y*M32 + M33);
    
       bg::append(matchPoly, bg::model::d2::point_xy<double>(pt.x,pt.y));
    }
    
-   drawEllipse(m, matchEllipsePts, Scalar(0,255,0));  //green
-   
-   Point2d pt2 = matchEllipse.center;
-
-   pt2.x = (pt2.x*M11 + pt2.y*M12 + M13) / (pt2.x*M31 + pt2.y*M32 + M33);
-   pt2.y = (pt2.x*M21 + pt2.y*M22 + M23) / (pt2.x*M31 + pt2.y*M32 + M33);
-
-   line(m,
-        Point(matchEllipse.center.x+output.size().width/2, matchEllipse.center.y),
-        Point(pt2.x, pt2.y),
-        Scalar(0,0,255),
-        2);
-
-   line(m,
-        Point(matchEllipse.center.x+output.size().width/2, matchEllipse.center.y),
-        Point(refEllipse.center.x, refEllipse.center.y),
-        Scalar(0,0,255),
-        2);
-
-   imshow("Image", m);
-   waitKey(0);
-
    // append last point
    bg::append(matchPoly, bg::model::d2::point_xy<double>(matchEllipsePts[0].x, matchEllipsePts[0].y));
 
@@ -646,11 +617,12 @@ double getMatchScore(const RotatedRect& refEllipse, const RotatedRect& matchElli
 
    ellipseUnion = 0;
    ellipseIntersect = 0;
+
    for ( polygon& p : unionPoly )
       ellipseUnion += bg::area(p);
    for ( polygon& p : intersectPoly )
       ellipseIntersect += bg::area(p);
-
+   
    return ellipseIntersect / ellipseUnion;
 }
 
@@ -726,7 +698,7 @@ void calcResults(Mat& output, Results& results, const ProgramSettings& settings,
       const RotatedRect& matchEllipse = matchRegions[matches[i].matchIndex].ellipse;
       const RotatedRect& refEllipse = refRegions[matches[i].refIndex].ellipse;
 
-      double matchScore = getMatchScore(refEllipse, matchEllipse, T, output);
+      double matchScore = getMatchScore(refEllipse, matchEllipse, T, settings);
       
       if ( matchScore > 0.5 )
       {
