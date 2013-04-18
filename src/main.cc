@@ -555,10 +555,6 @@ void findMatches(vector<Match>& matches, const vector<Region>& refRegions,
             Point2d(refRegions[TCmaxIdx].ellipse.center.x, refRegions[TCmaxIdx].ellipse.center.y),
             TCmaxIdx, i,
             cmf, dist, TCmaxCount));
-
-      cout << "TCMaxCount : " << matches.back().matchedLines << endl;
-      cout << "Distance   : " << matches.back().dist << endl;
-      cout << "CMF        : " << matches.back().cmf << endl;
    }
 }
 
@@ -645,15 +641,15 @@ void calcResults(Mat& output, Results& results, const ProgramSettings& settings,
 
    vector<bool> acceptMatch(matches.size());
    vector<bool> goodMatch(matches.size());
-      
+   
    int idx = 0;
    // filter bad matches
    for ( const Match& m : matches )
    {
       acceptMatch[idx] = (
            m.matchedLines > settings.descriptor.N * settings.descriptor.minMatches && 
-           ( m.cmf > settings.descriptor.minCmf ||
-             m.dist < settings.descriptor.maxDist ));
+           ( m.cmf <= settings.descriptor.minCmf )); //||
+            // m.dist > settings.descriptor.maxDist ));
 
       idx++;
    }
@@ -676,8 +672,13 @@ void calcResults(Mat& output, Results& results, const ProgramSettings& settings,
       if ( !acceptMatch[i] )
          continue;
 
-      const RotatedRect& matchEllipse = matchRegions[matches[i].matchIndex].ellipse;
-      const RotatedRect& refEllipse = refRegions[matches[i].refIndex].ellipse;
+      RotatedRect matchEllipse = matchRegions[matches[i].matchIndex].ellipse;
+      RotatedRect refEllipse = refRegions[matches[i].refIndex].ellipse;
+
+      // matchEllipse.size.width /= settings.descriptor.ellipseSize;
+      // matchEllipse.size.height /= settings.descriptor.ellipseSize;
+      // refEllipse.size.width /= settings.descriptor.ellipseSize;
+      // refEllipse.size.height /= settings.descriptor.ellipseSize;
 
       // compute intersection over union
       double matchScore = getMatchScore(refEllipse, matchEllipse, T, settings);
@@ -692,44 +693,47 @@ void calcResults(Mat& output, Results& results, const ProgramSettings& settings,
 
       totalMatches++;
    }
-   
-   // draw bad matches
-   for ( int i = 0; i < goodMatch.size(); ++i ) {
-      if ( acceptMatch[i] && !goodMatch[i] ) {
-         double x = matches[i].points[0].x;
-         double y = matches[i].points[0].y;
 
-         line(output,
-              Point(x+refImage.size().width,y),
-              Point(matches[i].points[1].x,
-                    matches[i].points[1].y),
-              Scalar(0,0,255),
-              2);
+   if ( settings.saveImage || settings.showImage ) {
+      // draw bad matches
+      for ( int i = 0; i < goodMatch.size(); ++i ) {
+         if ( acceptMatch[i] && !goodMatch[i] ) {
+            double x = matches[i].points[0].x;
+            double y = matches[i].points[0].y;
+
+            line(output,
+                 Point(x+refImage.size().width,y),
+                 Point(matches[i].points[1].x,
+                       matches[i].points[1].y),
+                 Scalar(0,0,255),
+                 2);
+         }
+      }
+
+      // draw good matches
+      for ( int i = 0; i < goodMatch.size(); ++i ) {
+         if ( acceptMatch[i] && goodMatch[i] ) {
+            bool skip = false;
+            
+            double x = matches[i].points[0].x;
+            double y = matches[i].points[0].y;
+
+            // TODO draw more random colors
+            line(output,
+                 Point(x+refImage.size().width,y),
+                 Point(matches[i].points[1].x,
+                       matches[i].points[1].y),
+                 Scalar(0,255,0),
+                 2);
+         }
       }
    }
 
-   // draw good matches
-   for ( int i = 0; i < goodMatch.size(); ++i ) {
-      if ( acceptMatch[i] && goodMatch[i] ) {
-         bool skip = false;
-         
-         double x = matches[i].points[0].x;
-         double y = matches[i].points[0].y;
-
-         // TODO draw more random colors
-         line(output,
-              Point(x+refImage.size().width,y),
-              Point(matches[i].points[1].x,
-                    matches[i].points[1].y),
-              Scalar(0,255,0),
-              2);
-      }
-   }
    results.correctMatches = goodMatches;
    results.incorrectMatches = totalMatches - goodMatches;
    results.accuracy = 100.0 * goodMatches / totalMatches;
 
-   cout << results.correctMatches << ":" << results.incorrectMatches << ":" << results.accuracy << endl;
+   //cout << myCmf << "    " << results.correctMatches << ":" << results.incorrectMatches << ":" << results.accuracy << endl;
 }
 
 int main(int argc, char *argv[])
