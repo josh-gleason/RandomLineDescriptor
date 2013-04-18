@@ -4,16 +4,51 @@
 #include <limits>
 #include <algorithm>
 #include <fstream>
+#include <ctime>
+#include <iomanip>
+#include <deque>
+
+#include <boost/geometry.hpp>
+#include <boost/geometry/geometries/point_xy.hpp>
+#include <boost/geometry/geometries/polygon.hpp>
 
 #include "settings.h"
+#include "results.h"
 
 using namespace cv;
 using namespace std;
 
+namespace bg = boost::geometry;
+
 #define CUBIC_INTERPOLATION
 
+// ideas
+// Reject threshold based on how many matches belonged to first vs. second class
+//    Reject threhold for precision recall?
+
 typedef pair<Point2d,Point2d> Line;
-typedef pair<Line, double> Match; // matching region and CMF
+//typedef pair<Line, double> Match; // matching region and CMF
+
+// TODO save match indices
+struct Match {
+   Match(const Point2d& p1, const Point2d& p2, int refIdx, int matIdx, double c, double d, int m)
+      : refIndex(refIdx), matchIndex(matIdx), matchedLines(m), dist(d), cmf(c)
+   {
+      points[0] = p1;
+      points[1] = p2;
+   }
+
+   // first point on match image
+   // second point on reference image
+   Point2d points[2];
+
+   int refIndex;
+   int matchIndex;
+
+   int matchedLines;
+   double dist;
+   double cmf;
+};
 
 const int CV_FTYPE = CV_32FC1;
 typedef float FType;
@@ -356,6 +391,7 @@ void extractRegions(vector<Region>& regions, const Mat& image, const ProgramSett
    }
 
    cout << "Removed " << badRegions.size() << " Regions" << endl;
+
    for ( int i = 0; i < badRegions.size(); ++i )
       regions.erase(regions.begin() + (badRegions[i] - i));
 
@@ -505,62 +541,152 @@ void findMatches(vector<Match>& matches, const vector<Region>& refRegions,
       }
 
       // determine matched region and if match has occured
-      double CMF = (TCmax - TCmax2)/TCmax2;
+      double cmf = (TCmax - TCmax2)/TCmax2;
       
       // spacial distance between top two matches
       Point2d pt1(refRegions[TCmaxIdx].ellipse.center.x, refRegions[TCmaxIdx].ellipse.center.y);
       Point2d pt2(refRegions[TCmaxIdx2].ellipse.center.y, refRegions[TCmaxIdx2].ellipse.center.y);
       double dist = sqrt((pt1.x-pt2.x)*(pt1.x-pt2.x)+(pt1.y-pt2.y)*(pt1.y-pt2.y));
 
-      if ( TCmaxCount > N * settings.descriptor.minMatches &&
-           ( CMF > settings.descriptor.minCmf ||
-             dist < settings.descriptor.maxDist ))
-      {
-         matches.push_back(
-            Match(Line(
-               Point2d(matchRegions[i].ellipse.center.x, matchRegions[i].ellipse.center.y),
-               Point2d(refRegions[TCmaxIdx].ellipse.center.x, refRegions[TCmaxIdx].ellipse.center.y)),
-               CMF));
-      }
+      matches.push_back(
+         Match(
+            Point2d(matchRegions[i].ellipse.center.x, matchRegions[i].ellipse.center.y),
+            Point2d(refRegions[TCmaxIdx].ellipse.center.x, refRegions[TCmaxIdx].ellipse.center.y),
+            TCmaxIdx, i,
+            dist, cmf, TCmaxCount));
    }
 }
 
-int main(int argc, char *argv[])
+double getMatchScore(const RotatedRect& refEllipse, const RotatedRect& matchEllipse, const Mat& T, Mat& output)
 {
-   ProgramSettings settings;
-  
-   // load settings
-   if ( !parseSettings(argc, argv, settings) )
-      return -1;
+//   typedef bg::model::d2::point_xy<double> pt_xy;
+   typedef bg::model::polygon<bg::model::d2::point_xy<double>> polygon;
 
-   // ideas
-   // Reject threshold based on how many matches belonged to first vs. second class
-   //    Reject threhold for precision recall?
+   double ellipseUnion, ellipseIntersect;
 
-   srand(time(0));
+   // transform match to reference
+   double M11 = T.at<double>(0,0);
+   double M12 = T.at<double>(0,1);
+   double M13 = T.at<double>(0,2);
+   double M21 = T.at<double>(1,0);
+   double M22 = T.at<double>(1,1);
+   double M23 = T.at<double>(1,2);
+   double M31 = T.at<double>(2,0);
+   double M32 = T.at<double>(2,1);
+   double M33 = T.at<double>(2,2);
    
-   // images
-   Mat refImage = imread(settings.refImage);
-   Mat matchImage = imread(settings.matchImage);
+   // geometries for intersection
+   polygon refPoly, matchPoly;
+   deque<polygon> unionPoly;
+   deque<polygon> intersectPoly;
    
-   vector<Region> refRegions, matchRegions;
-   
-   extractRegions(refRegions, refImage, settings, true);
-   extractRegions(matchRegions, matchImage, settings, false);
+   vector<Point2d> matchEllipsePts(564U);
+   vector<Point2d> refEllipsePts(564U);
 
-   vector<Match> matches;
+   // compute points
+   getEllipsePoints(matchEllipsePts, matchEllipse, 564U);
+   getEllipsePoints(refEllipsePts, refEllipse, 564U);
 
-   // find matching regions
-   findMatches(matches, refRegions, matchRegions, settings);
+   Mat m;
+   output.copyTo(m);
+
+   vector<Point2d> matchEllipsePts2(matchEllipsePts.size());
+   for ( int i = 0; i < matchEllipsePts2.size(); ++i ) {
+      matchEllipsePts2[i].x = output.size().width/2 + matchEllipsePts[i].x;
+      matchEllipsePts2[i].y = matchEllipsePts[i].y;
+   }
+
+   drawEllipse(m, matchEllipsePts2, Scalar(255,0,0));  //blue
+   drawEllipse(m, refEllipsePts, Scalar(0,0,255));    //red
+
+   // transform match to reference image
+   for ( Point2d& pt : matchEllipsePts )
+   {
+      pt.x = (pt.x*M11 + pt.y*M12 + M13) / (pt.x*M31 + pt.y*M32 + M33);
+      pt.y = (pt.x*M21 + pt.y*M22 + M23) / (pt.x*M31 + pt.y*M32 + M33);
    
+      bg::append(matchPoly, bg::model::d2::point_xy<double>(pt.x,pt.y));
+   }
+   
+   drawEllipse(m, matchEllipsePts, Scalar(0,255,0));  //green
+   
+   Point2d pt2 = matchEllipse.center;
+
+   pt2.x = (pt2.x*M11 + pt2.y*M12 + M13) / (pt2.x*M31 + pt2.y*M32 + M33);
+   pt2.y = (pt2.x*M21 + pt2.y*M22 + M23) / (pt2.x*M31 + pt2.y*M32 + M33);
+
+   line(m,
+        Point(matchEllipse.center.x+output.size().width/2, matchEllipse.center.y),
+        Point(pt2.x, pt2.y),
+        Scalar(0,0,255),
+        2);
+
+   line(m,
+        Point(matchEllipse.center.x+output.size().width/2, matchEllipse.center.y),
+        Point(refEllipse.center.x, refEllipse.center.y),
+        Scalar(0,0,255),
+        2);
+
+   imshow("Image", m);
+   waitKey(0);
+
+   // append last point
+   bg::append(matchPoly, bg::model::d2::point_xy<double>(matchEllipsePts[0].x, matchEllipsePts[0].y));
+
+   // create match polygon
+   for ( Point2d& pt : refEllipsePts )
+      bg::append(refPoly, bg::model::d2::point_xy<double>(pt.x, pt.y));
+
+   // append last point
+   bg::append(refPoly, bg::model::d2::point_xy<double>(refEllipsePts[0].x, refEllipsePts[0].y));
+
+   // find intersection and union
+   bg::union_(refPoly, matchPoly, unionPoly);
+   bg::intersection(refPoly, matchPoly, intersectPoly);
+
+   ellipseUnion = 0;
+   ellipseIntersect = 0;
+   for ( polygon& p : unionPoly )
+      ellipseUnion += bg::area(p);
+   for ( polygon& p : intersectPoly )
+      ellipseIntersect += bg::area(p);
+
+   return ellipseIntersect / ellipseUnion;
+}
+
+void calcResults(Mat& output, Results& results, const ProgramSettings& settings,
+   const vector<Match>& matches, const vector<Region>& refRegions,
+   const vector<Region>& matchRegions, const Mat& refImage, const Mat& matchImage)
+{
    // initialize output results
-   Mat output(max(refImage.size().height, matchImage.size().height),
-              refImage.size().width+matchImage.size().width,
-              CV_8UC3, Scalar(0,0,0));
+   output.create(max(refImage.size().height, matchImage.size().height),
+                     refImage.size().width+matchImage.size().width,
+                     CV_8UC3);
 
    // reference image
    refImage.copyTo(output(Rect(0,0,refImage.size().width, refImage.size().height)));
    matchImage.copyTo(output(Rect(refImage.size().width,0,matchImage.size().width, matchImage.size().height)));
+
+   vector<bool> acceptMatch(matches.size());
+   vector<bool> goodMatch(matches.size());
+
+   int count = 0;
+   int idx = 0;
+   // filter bad matches
+   for ( const Match& m : matches )
+   {
+      acceptMatch[idx] = (
+           m.matchedLines > settings.descriptor.N * settings.descriptor.minMatches && 
+           ( m.cmf > settings.descriptor.minCmf ||
+             m.dist < settings.descriptor.maxDist ));
+
+      if ( acceptMatch[idx] )
+         count++;
+
+      idx++;
+   }
+
+   cout << count << endl;
 
    // matches
    // first (type Line): (pair<Point2d,Point2d>) 
@@ -568,22 +694,8 @@ int main(int argc, char *argv[])
    //    second is a point in the reference region
    // second (type double): CMF
 
-   for ( size_t i = 0; i < matches.size(); ++i )
-   {
-      //if ( matches[i].second > 0.4 && matches[i].second < 1 )
-      {
-         line(output,
-            Point(matches[i].first.first.x+refImage.size().width,
-                  matches[i].first.first.y),
-            Point(matches[i].first.second.x,
-                  matches[i].first.second.y),
-            Scalar(0,0,255),
-            2);
-      }
-   }
-
    // Test homography transforms
-   double M[3][3];
+//   double M[3][3];
    Mat T(3,3,CV_64FC1);
    ifstream fin(settings.homographyFile);
    for ( int row = 0; row < 3; ++row )
@@ -592,56 +704,153 @@ int main(int argc, char *argv[])
    fin.close();
 
    T = T.inv();
-   
+  /* 
+   // copy to matrix to make it easier
    for ( int row = 0; row < 3; ++row )
       for ( int col = 0; col < 3; ++col )
          M[row][col] = T.at<double>(row,col);
-
-
+*/
+   // transform points
    int counter = 0;
    int total = 0;
-   // ignore Z
    for ( size_t i = 0; i < matches.size(); ++i )
    {
-      double x = matches[i].first.first.x;
-      double y = matches[i].first.first.y;
+      if ( !acceptMatch[i] )
+         continue;
 
-      // transformed point
+      // use intersection over union method > 0.5 method
+      
+      //double x = matches[i].points[0].x;
+      //double y = matches[i].points[0].y;
+
+      const RotatedRect& matchEllipse = matchRegions[matches[i].matchIndex].ellipse;
+      const RotatedRect& refEllipse = refRegions[matches[i].refIndex].ellipse;
+
+      double matchScore = getMatchScore(refEllipse, matchEllipse, T, output);
+      
+      if ( matchScore > 0.5 )
+      {
+         goodMatch[i] = true;
+         counter++;
+      } else {
+         goodMatch[i] = false;
+      }
+
+      total++;
+
+      /*
       Point2d np = Point2d(
          (x*M[0][0] + y*M[0][1] + M[0][2]) / (x*M[2][0] + y*M[2][1] + M[2][2]),
          (x*M[1][0] + y*M[1][1] + M[1][2]) / (x*M[2][0] + y*M[2][1] + M[2][2]));
 
-      if ( np.x > 0 && np.x < refImage.size().width &&
-           np.y > 0 && np.y < refImage.size().height )
-         total++;
-      else
+      if ( np.x <= 0 || np.x >= refImage.size().width ||
+           np.y <= 0 || np.y >= refImage.size().height )
          continue;
 
+      // consider this match
+      total++;
+      
       // reference image match point
-      Point2d rp = matches[i].first.second;
+      Point2d rp = matches[i].points[1];
 
-      //pMatch = pMatch / pMatch.at<double>(2,0);
+      // pMatch = pMatch / pMatch.at<double>(2,0);
       double dist = sqrt((np.x-rp.x)*(np.x-rp.x) + (np.y-rp.y)*(np.y-rp.y));
 
       if ( dist < 10 ) {
+         goodMatch[i] = true;
+         counter++;
+      } else {
+         goodMatch[i] = false; 
+      }*/
+   }
+   
+   // draw bad matches
+   for ( int i = 0; i < goodMatch.size(); ++i ) {
+      if ( acceptMatch[i] && !goodMatch[i] ) {
+         double x = matches[i].points[0].x;
+         double y = matches[i].points[0].y;
+
          line(output,
               Point(x+refImage.size().width,y),
-              Point(matches[i].first.second.x,
-                    matches[i].first.second.y),
-              Scalar(0,255,0),
+              Point(matches[i].points[1].x,
+                    matches[i].points[1].y),
+              Scalar(0,0,255),
               2);
-         counter++;
       }
    }
 
-   double accuracy = 100.0 * counter / total;
+   // draw good matches
+   for ( int i = 0; i < goodMatch.size(); ++i ) {
+      if ( acceptMatch[i] && goodMatch[i] ) {
+         bool skip = false;
+         
+         double x = matches[i].points[0].x;
+         double y = matches[i].points[0].y;
 
-   cout << "Accuracy: " << accuracy << "%" << endl;
-   cout << "Total Correct: " << counter << endl;
-   cout << "Total Matches: " << total << endl;
+         // TODO draw more random colors
+         //circle(output, Point(x+refImage.size().width,y), 4, Scalar((i*123534)%255, 255, (i*123457)%255), 2);
+         //circle(output, Point(matches[i].points[1].x,matches[i].points[1].y), 4, Scalar((i*123534)%255, 255, (i*123457)%255), 2);
+
+         line(output,
+              Point(x+refImage.size().width,y),
+              Point(matches[i].points[1].x,
+                    matches[i].points[1].y),
+              Scalar(0,255,0),
+              2);
+      }
+   }
+
+   results.correctMatches = counter;
+   results.incorrectMatches = total - counter;
+   results.accuracy = 100.0 * counter / total;
+}
+
+int main(int argc, char *argv[])
+{
+   ProgramSettings settings;
+
+   // load settings
+   if ( !parseSettings(argc, argv, settings) )
+      return -1;
+
+   srand(time(0));
+
+   // local variables 
+   Mat refImage = imread(settings.refImage);
+   Mat matchImage = imread(settings.matchImage);
+   Mat output;
+   vector<Region> refRegions, matchRegions;
+   vector<Match> matches;
+   Results results;
+   clock_t t;
+
+   // extract features from reference image and matching image
+   t = clock();
+   extractRegions(refRegions, refImage, settings, true);
+   results.refDetectTime = clock() - t;
+   
+   t = clock();
+   extractRegions(matchRegions, matchImage, settings, false);
+   results.matchDetectTime = clock() - t;
+
+   // find matching regionsi
+   t = clock();
+   findMatches(matches, refRegions, matchRegions, settings);
+   results.matchingTime = clock() - t;
+
+   calcResults(output, results, settings, matches, refRegions, matchRegions, refImage, matchImage);
+
+   // Output results
+   cout << "       Accuracy: " << results.accuracy << "%" << endl;
+   cout << "  Total Correct: " << results.correctMatches << endl;
+   cout << "Total Incorrect: " << results.incorrectMatches << endl;
+
+   cout << "Reference Detection time: " << setprecision(4) << fixed << (double)results.refDetectTime / CLOCKS_PER_SEC << "s" << endl;
+   cout << "    Match Detection time: " << setprecision(4) << fixed << (double)results.matchDetectTime / CLOCKS_PER_SEC << "s" << endl;
+   cout << "           Matching time: " << setprecision(4) << fixed << (double)results.matchingTime / CLOCKS_PER_SEC << "s" << endl;
 
    if ( settings.saveImage || settings.saveConfig ) {
-      string outputName = buildOutputString(settings.outputLocation, accuracy);
+      string outputName = buildOutputString(settings.outputLocation, results);
 
       if ( settings.saveImage ) {
          cout << "Writing output image to " << outputName << ".jpg" << endl;

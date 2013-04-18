@@ -2,6 +2,9 @@
 #define SETTINGS_H
 
 #include <string>
+#include "results.h"
+
+struct Results;
 
 const std::string DEFAULT_CONFIG = "bin/config.cfg";
 
@@ -111,7 +114,7 @@ struct ProgramSettings {
    std::string outputLocation;
 };
 
-std::string buildOutputString(const std::string& format, double accuracy);
+std::string buildOutputString(const std::string& format, const Results& results);
 void writeConfig(const std::string& filename, ProgramSettings& settings);
 bool parseSettings(int argc, char* argv[], ProgramSettings& settings);
 

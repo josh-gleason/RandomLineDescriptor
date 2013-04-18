@@ -11,7 +11,7 @@ namespace po = boost::program_options;
 
 using namespace std;
 
-string buildOutputString(const string& format, double accuracy)
+string buildOutputString(const string& format, const Results& results)
 {
    istringstream sin(format);
    ostringstream sout;
@@ -43,7 +43,7 @@ string buildOutputString(const string& format, double accuracy)
          sin >> val;
          count--;
          if ( val == 'a' ) {
-            sout << setprecision(2) << fixed << accuracy;
+            sout << setprecision(2) << fixed << results.accuracy;
          } else if ( val == 'M' ) {
             sout << month;
          } else if ( val == 'd' ) {
@@ -56,6 +56,10 @@ string buildOutputString(const string& format, double accuracy)
             sout << minute;
          } else if ( val == 's' ) {
             sout << second;
+         } else if ( val == 'c' ) {
+            sout << results.correctMatches;
+         } else if ( val == 'i' ) {
+            sout << results.incorrectMatches;
          } else if ( val == '%' ) {
             sout << '%';
          } else {
