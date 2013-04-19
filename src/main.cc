@@ -20,7 +20,7 @@ using namespace std;
 
 namespace bg = boost::geometry;
 
-#define CUBIC_INTERPOLATION
+//#define CUBIC_INTERPOLATION
 
 // ideas
 // Reject threshold based on how many matches belonged to first vs. second class
@@ -62,7 +62,7 @@ struct Region {
 
    long int baseIdx;
 
-   double errMax;
+   double meanErr;
 };
 
 void getEllipsePoints(vector<Point2d>& vertices, const RotatedRect& box, size_t points=1000U);
@@ -179,8 +179,91 @@ double distFunc(const Mat& first, const Mat& second)
    return sum(diff)[0];
 }
 
+double dist(const Point2d& p1, const Point2d& p2)
+{
+   return sqrt( (p1.x-p2.x)*(p1.x-p2.x)+(p1.y-p2.y)*(p1.y-p2.y) );
+}
+
+void buildFeatures(Region& region, const Mat& image, size_t lineCount, const ProgramSettings& settings)
+{
+   static vector<Point2d> verts;
+   getEllipsePoints(verts, region.ellipse, settings.descriptor.ellipsePoints);
+   
+   // resize vectors
+   region.descriptors.resize(lineCount);
+   region.mean.resize(lineCount);
+   region.err.resize(lineCount);
+   region.lines.resize(lineCount);
+
+   // compute descriptors
+   for ( int idx = 0; idx < lineCount; ++idx ) {
+      // choose two random vertices
+      int idx1, idx2;
+
+      // pick random points
+      if ( settings.descriptor.minDist <= 0 ) {
+         do {
+            idx1 = rand() % settings.descriptor.ellipsePoints;
+            idx2 = rand() % settings.descriptor.ellipsePoints;
+         } while ( idx1 == idx2 );
+      } else {
+         do {
+            idx1 = rand() % settings.descriptor.ellipsePoints;
+            idx2 = rand() % settings.descriptor.ellipsePoints;
+         } while ( dist(verts[idx1],verts[idx2]) <= settings.descriptor.minDist );
+      }
+
+      // create line iterator
+      LineIterator line(image, verts[idx1], verts[idx2]);
+
+      int lineLen = line.count;   // number of pixels in line
+
+      // copy line to vector for iteration
+      Mat lineMat(1, lineLen, CV_FTYPE);
+      for ( int i = 0; i < line.count; ++i, ++line )
+         lineMat.at<FType>(0,i) = (FType)(**line);
+
+      // create descriptor
+      region.descriptors[idx].create(Size(settings.descriptor.l, 1), CV_FTYPE);
+
+      // set first value
+      region.descriptors[idx].at<FType>(0,0) = lineMat.at<FType>(0,0);
+      
+      double sum = lineMat.at<FType>(0,0);
+      double diffs = 0;
+
+      // linear interpolate
+      for ( int i = 1; i < settings.descriptor.l; ++i )
+      {
+         double x = (double)i * (lineLen-1.0) / (settings.descriptor.l-1.0);
+         if ( fmod(x,1.0) == 0.0 ) {
+            region.descriptors[idx].at<FType>(0,i) = lineMat.at<FType>(0,(int)x);
+         } else {
+            double x1Val = lineMat.at<FType>(0,(int)x);
+            double x2Val = lineMat.at<FType>(0,((int)x)+1);
+          
+            x = fmod(x,1.0);   // floating point part of x
+
+            region.descriptors[idx].at<FType>(0,i) = x1Val + x * (x2Val - x1Val);
+         }
+
+         diffs += fabs(region.descriptors[idx].at<FType>(0,i) - region.descriptors[idx].at<FType>(0,i-1));
+         sum += region.descriptors[idx].at<FType>(0,i);
+      }
+
+      region.err[idx] = diffs / (FType)(settings.descriptor.l - 1);
+      region.mean[idx] = sum / (FType)settings.descriptor.l;
+
+      region.meanErr += region.err[idx];
+
+      region.descriptors[idx] -= region.mean[idx];
+   }
+  
+   region.meanErr /= (double)lineCount;
+}
+
 // image must be grayscale
-void buildFeatures(Region& region, const Mat& image, size_t lineCount,
+void buildSmoothedFeatures(Region& region, const Mat& image, size_t lineCount,
    int featureSize, double smoothing, double minDist)
 {
    // compute affine transform for normalization
@@ -302,7 +385,7 @@ void buildFeatures(Region& region, const Mat& image, size_t lineCount,
    waitKey(0);
 #endif
 
-   region.errMax = *max_element(region.err.begin(), region.err.end());
+//   region.errMax = *max_element(region.err.begin(), region.err.end());
 }
 
 // color image input
@@ -374,17 +457,22 @@ void extractRegions(vector<Region>& regions, const Mat& image, const ProgramSett
    {
       RotatedRect& r = ellipses[i];
       regions[i].ellipse = r;
-      if ( referenceImage ) {
-         buildFeatures(regions[i], grayImage, s.Nk, s.l, (s.smoothRegion ? s.smoothing : 0), s.minDist);
-      } else {
-         buildFeatures(regions[i], grayImage, s.N, s.l, (s.smoothRegion ? s.smoothing : 0), s.minDist);
-      }
-      double sum = 0.0;
-      for ( double e : regions[i].err )
-         sum += e;
-      sum /= regions[i].err.size();
 
-      if ( sum < settings.descriptor.minMeanErr )
+      if ( settings.descriptor.smoothRegion ) {  // SLOW VERSION
+         if ( referenceImage ) {
+            buildSmoothedFeatures(regions[i], grayImage, s.Nk, s.l, s.smoothing, s.minDist); 
+         } else {
+            buildSmoothedFeatures(regions[i], grayImage, s.N, s.l, s.smoothing, s.minDist); 
+         }
+      } else { // Much faster
+         if ( referenceImage ) {
+            buildFeatures(regions[i], grayImage, s.Nk, settings); 
+         } else {
+            buildFeatures(regions[i], grayImage, s.N, settings); 
+         }
+      }
+
+      if ( regions[i].meanErr < settings.descriptor.minMeanErr )
       {
          // reject
          badRegions.push_back(i);
@@ -547,14 +635,14 @@ void findMatches(vector<Match>& matches, const vector<Region>& refRegions,
       // spacial distance between top two matches
       Point2d pt1(refRegions[TCmaxIdx].ellipse.center.x, refRegions[TCmaxIdx].ellipse.center.y);
       Point2d pt2(refRegions[TCmaxIdx2].ellipse.center.y, refRegions[TCmaxIdx2].ellipse.center.y);
-      double dist = sqrt((pt1.x-pt2.x)*(pt1.x-pt2.x)+(pt1.y-pt2.y)*(pt1.y-pt2.y));
+      double distance = dist(pt1,pt2); //((pt1.x-pt2.x)*(pt1.x-pt2.x)+(pt1.y-pt2.y)*(pt1.y-pt2.y));
 
       matches.push_back(
          Match(
             Point2d(matchRegions[i].ellipse.center.x, matchRegions[i].ellipse.center.y),
             Point2d(refRegions[TCmaxIdx].ellipse.center.x, refRegions[TCmaxIdx].ellipse.center.y),
             TCmaxIdx, i,
-            cmf, dist, TCmaxCount));
+            cmf, distance, TCmaxCount));
    }
 }
 
@@ -649,7 +737,7 @@ void calcResults(Mat& output, Results& results, const ProgramSettings& settings,
       acceptMatch[idx] = (
            m.matchedLines > settings.descriptor.N * settings.descriptor.minMatches && 
            (( m.cmf <= settings.descriptor.maxCmf && m.cmf >= settings.descriptor.minCmf ) ||
-              m.dist > settings.descriptor.maxDist ));
+              m.dist < settings.descriptor.maxDist ));
       idx++;
    }
 

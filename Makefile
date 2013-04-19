@@ -1,4 +1,4 @@
-FLAGS=`pkg-config opencv --cflags` -std=c++11 -g
+FLAGS=`pkg-config opencv --cflags` -std=c++11 -O4
 LIBS=`pkg-config opencv --libs` -lboost_program_options -lboost_system -lboost_filesystem
 
 all: bin/main
