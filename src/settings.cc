@@ -108,6 +108,7 @@ void writeConfig(const string& filename, ProgramSettings& settings)
    fout << "DES_MIN_MEAN_ERR = " << d.minMeanErr << endl;
    fout << "MAT_MIN_MATCHES = " << d.minMatches << endl;
    fout << "MAT_MIN_CMF = " << d.minCmf << endl;
+   fout << "MAT_MAX_CMF = " << d.maxCmf << endl;
    fout << "MAT_MAX_DIST = " << d.maxDist << endl;
    fout << "MAT_K1 = " << d.k1 << endl;
    fout << "MAT_P1 = " << d.p1 << endl;
@@ -188,6 +189,8 @@ bool parseSettings(int argc, char* argv[], ProgramSettings& settings)
       ("MAT_MIN_MATCHES", po::value<double>(&d.minMatches)->required(),
          "")
       ("MAT_MIN_CMF", po::value<double>(&d.minCmf)->required(),
+         "")
+      ("MAT_MAX_CMF", po::value<double>(&d.maxCmf)->required(),
          "")
       ("MAT_MAX_DIST", po::value<double>(&d.maxDist)->required(),
          "")

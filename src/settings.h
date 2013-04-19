@@ -62,6 +62,7 @@ struct ProgramSettings {
          N(300),
          kdTrees(4),
          minDist(0.01),
+         maxCmf(1000.0),
          minCmf(0.6),
          maxDist(5.0),
          minMatches(0.05),
@@ -87,6 +88,7 @@ struct ProgramSettings {
       double minDist; // minimum allowed length of line (with respect to sqrt(area) of region)
 
       double minCmf;  // minimum acceptable CMF score for matching
+      double maxCmf;  // maximum acceptable CMF score for matching
       double maxDist; // maximum distance two regions can be for the CMF score not to be considered
       double minMatches; // minimum ratio of matches that must occur for region to be accepted
       double minMeanErr; // minimum mean err for a region to be considered

@@ -648,9 +648,8 @@ void calcResults(Mat& output, Results& results, const ProgramSettings& settings,
    {
       acceptMatch[idx] = (
            m.matchedLines > settings.descriptor.N * settings.descriptor.minMatches && 
-           ( m.cmf <= settings.descriptor.minCmf )); //||
-            // m.dist > settings.descriptor.maxDist ));
-
+           (( m.cmf <= settings.descriptor.maxCmf && m.cmf >= settings.descriptor.minCmf ) ||
+              m.dist > settings.descriptor.maxDist ));
       idx++;
    }
 
@@ -764,7 +763,7 @@ int main(int argc, char *argv[])
    extractRegions(matchRegions, matchImage, settings, false);
    results.matchDetectTime = clock() - t;
 
-   // find matching regionsi
+   // find matching regions
    t = clock();
    findMatches(matches, refRegions, matchRegions, settings);
    results.matchingTime = clock() - t;
