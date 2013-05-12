@@ -11,6 +11,14 @@ namespace po = boost::program_options;
 
 using namespace std;
 
+istream& operator>>(istream& in, ProgramSettings::DescriptorSettings::PointPos& type)
+{
+   int i;
+   in >> i;
+   type = (ProgramSettings::DescriptorSettings::PointPos)i;
+   return in;
+}
+
 string buildOutputString(const string& format, const Results& results)
 {
    istringstream sin(format);
@@ -99,6 +107,8 @@ void writeConfig(const string& filename, ProgramSettings& settings)
    fout << "MSER_MAX_REGIONS = " << m.maxRegions << endl;
    fout << "DES_ELLIPSE_SIZE = " << d.ellipseSize << endl;
    fout << "DES_ELLIPSE_POINTS = " << d.ellipsePoints << endl;
+   fout << "DES_SAMPLE_TYPE = " << (int)d.type << endl;
+   fout << "DES_NORM_STD_DEV = " << d.gaussStdDev << endl;
    fout << "DES_L = " << d.l << endl;
    fout << "DES_NK = " << d.Nk << endl;
    fout << "DES_N = " << d.N << endl;
@@ -171,6 +181,10 @@ bool parseSettings(int argc, char* argv[], ProgramSettings& settings)
       ("DES_ELLIPSE_SIZE", po::value<double>(&d.ellipseSize)->required(),
          "")
       ("DES_ELLIPSE_POINTS", po::value<size_t>(&d.ellipsePoints)->required(),
+         "")
+      ("DES_SAMPLE_TYPE", po::value<ProgramSettings::DescriptorSettings::PointPos>(&d.type)->required(),
+         "")
+      ("DES_NORM_STD_DEV", po::value<double>(&d.gaussStdDev)->required(),
          "")
       ("DES_L", po::value<int>(&d.l)->required(),
          "")
