@@ -80,7 +80,8 @@ struct ProgramSettings {
          smoothRegion(false),
          smoothing(2.5),
          type(RAND_POINTS_GAUSSIAN),
-         gaussStdDev(0.3)
+         gaussStdDev(0.3),
+         binary(false)  // disabled because it doesnt work atm
       {}
 
       double ellipseSize;  // scale factor of ellipse to min bounding box
@@ -121,6 +122,8 @@ struct ProgramSettings {
       double gaussStdDev;   // Used with RAND_POINT_GAUSSIAN
 
       bool interpSamples;  // if true use linear interpolation when sampling lines (otherwise nearest neighbor)
+
+      bool binary;   // use binary descriptor
    };
 
    MserSettings mser;

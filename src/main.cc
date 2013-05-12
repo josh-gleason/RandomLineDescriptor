@@ -1,4 +1,13 @@
+// TODO List:
+//    Compute BitWise descriptor
+//    Convert FLANN to do hamming distance
+//    Compute P.R. Curves
+// Wish List:
+//    Try other feature points (SIFT)
+//    
+
 #include <opencv2/opencv.hpp>
+#include <opencv2/flann/flann.hpp>
 #include <iostream>
 #include <tuple>
 #include <limits>
@@ -26,6 +35,9 @@ namespace bg = boost::geometry;
 // Used for debugging
 //#define DRAW_CIRCLE
 //#define DRAW_RES
+
+typedef unsigned char BinaryMatchType;
+const int CV_BTYPE = CV_8UC1;
 
 // ideas
 // Reject threshold based on how many matches belonged to first vs. second class
@@ -76,6 +88,8 @@ struct Region {
 
    double meanErr;
 };
+
+// TODO Add prototypes
 
 void getEllipsePoints(vector<Point2d>& vertices, const RotatedRect& box, size_t points=1000U);
 void drawEllipse(Mat& image, const RotatedRect& box, const Scalar& color = Scalar(0,0,255));
@@ -334,7 +348,6 @@ void buildLineDescriptor(const Mat& image, Region& region, size_t regionIdx, con
          diffs += fabs(region.descriptors[regionIdx].at<FType>(0,i) - region.descriptors[regionIdx].at<FType>(0,i-1));
          sum += region.descriptors[regionIdx].at<FType>(0,i);
       }
-
    // nearest neighbor sample
    } else {
 
@@ -366,6 +379,21 @@ void buildLineDescriptor(const Mat& image, Region& region, size_t regionIdx, con
    region.mean[regionIdx] = sum / (FType)settings.descriptor.l;
 
    region.descriptors[regionIdx] -= region.mean[regionIdx];
+
+   // If binary descriptor compare to mean and make the descriptor binary
+   if ( settings.descriptor.binary ) {
+      Mat desc(Size(settings.descriptor.l, 1), CV_BTYPE);
+
+      int len = min((BinaryMatchType)(sizeof(BinaryMatchType)*8), (BinaryMatchType)settings.descriptor.l);
+
+      for ( int i = 0; i < settings.descriptor.l; ++i ) {
+         if ( region.descriptors[regionIdx].at<FType>(i) > 0.0 )
+            desc.at<BinaryMatchType>(i) = 1;
+         else
+            desc.at<BinaryMatchType>(i) = 0;
+      }
+      desc.copyTo(region.descriptors[regionIdx]);
+   }
 }
 
 void warpImage(const Mat& input, const RotatedRect& rect, int ksize, Mat& output, const ProgramSettings& settings)
@@ -558,30 +586,71 @@ void extractRegions(vector<Region>& regions, const Mat& image, const ProgramSett
 void findMatches(vector<Match>& matches, const vector<Region>& refRegions,
    const vector<Region>& matchRegions, const ProgramSettings& settings)
 {
+   std::vector<DMatch> matchList;
    size_t Nk = settings.descriptor.Nk;
    size_t N = settings.descriptor.N;
    size_t l = settings.descriptor.l;
-
-   // initialize matrices
-   Mat refDescriptors(refRegions.size()*Nk, l, CV_FTYPE);
-   Mat matchDescriptors(matchRegions.size()*N, l, CV_FTYPE);
-
-   // copy descriptors over
-   for ( size_t i = 0; i < refRegions.size(); ++i )
-      for ( size_t j = 0; j < Nk; ++j )
-         refRegions[i].descriptors[j].copyTo(
-            refDescriptors.row(i*Nk+j));
    
-   for ( size_t i = 0; i < matchRegions.size(); ++i )
-      for ( size_t j = 0; j < N; ++j )
-         matchRegions[i].descriptors[j].copyTo(
-            matchDescriptors.row(i*N+j));
+   Mat refDescriptors, matchDescriptors;
    
-   // Create matcher and match
-   FlannBasedMatcher matcher(new flann::KDTreeIndexParams(settings.descriptor.kdTrees));
-   std::vector<DMatch> matchList;
-   matcher.match(matchDescriptors, refDescriptors, matchList);
+   if ( settings.descriptor.binary ) {
+      // add this as a template type later with 32 or 16 or 8
+      //typedef cvflann::Hamming<_t> Distance_H32;
+      //flann::GenericIndex<Distance_H32> *matcher;
+      
+      // initialize matrices
+      refDescriptors.create(refRegions.size()*Nk, settings.descriptor.l, CV_BTYPE);
+      matchDescriptors.create(matchRegions.size()*N, settings.descriptor.l, CV_BTYPE);
 
+      // copy descriptors over
+      for ( size_t i = 0; i < refRegions.size(); ++i )
+         for ( size_t j = 0; j < Nk; ++j )
+            refRegions[i].descriptors[j].copyTo(
+               refDescriptors.row(i*Nk+j));
+      
+      for ( size_t i = 0; i < matchRegions.size(); ++i )
+         for ( size_t j = 0; j < N; ++j )
+            matchRegions[i].descriptors[j].copyTo(
+               matchDescriptors.row(i*N+j));
+      
+      // TODO checks is a parameters to SearchParams which could be set by a setting (default is 32)
+//      cvflann::KDTreeIndexParams iParams(settings.descriptor.kdTrees);
+      /*
+      matcher = new flann::GenericIndex<Distance_H32>(refDescriptors, iParams);
+
+      const int knn = 2;
+
+      Mat indices(matchRegions.size()*N, knn, CV_32SC1);
+      Mat dists(matchRegions.size()*N, knn, CV_32FC1);
+      
+      cvflann::SearchParams sParams;
+      matcher->knnSearch(matchDescriptors, indices, dists, knn, sParams);
+      */
+
+//      FlannBasedMatcher matcher(new flann::LshIndexParams(10, 12, 2));
+      BFMatcher matcher(NORM_HAMMING);
+      matcher.match(matchDescriptors, refDescriptors, matchList);
+   } else {
+      // initialize matrices
+      refDescriptors.create(refRegions.size()*Nk, l, CV_FTYPE);
+      matchDescriptors.create(matchRegions.size()*N, l, CV_FTYPE);
+
+      // copy descriptors over
+      for ( size_t i = 0; i < refRegions.size(); ++i )
+         for ( size_t j = 0; j < Nk; ++j )
+            refRegions[i].descriptors[j].copyTo(
+               refDescriptors.row(i*Nk+j));
+      
+      for ( size_t i = 0; i < matchRegions.size(); ++i )
+         for ( size_t j = 0; j < N; ++j )
+            matchRegions[i].descriptors[j].copyTo(
+               matchDescriptors.row(i*N+j));
+      
+      // Create matcher and match
+      FlannBasedMatcher matcher(new flann::KDTreeIndexParams(settings.descriptor.kdTrees));
+      matcher.match(matchDescriptors, refDescriptors, matchList);
+   }
+   
    for ( size_t i = 0; i < matchRegions.size(); ++i )
    {
       const Region& matchReg = matchRegions[i];
@@ -705,6 +774,7 @@ void findMatches(vector<Match>& matches, const vector<Region>& refRegions,
       Point2d pt2(refRegions[TCmaxIdx2].ellipse.center.y, refRegions[TCmaxIdx2].ellipse.center.y);
       double distance = dist(pt1,pt2); //((pt1.x-pt2.x)*(pt1.x-pt2.x)+(pt1.y-pt2.y)*(pt1.y-pt2.y));
 
+      cout << distance << ' ' << cmf << ' ' << TCmaxCount << endl;
       matches.push_back(
          Match(
             Point2d(matchRegions[i].ellipse.center.x, matchRegions[i].ellipse.center.y),
@@ -941,7 +1011,7 @@ int main(int argc, char *argv[])
    cout << "Reference Detection time: " << setprecision(4) << fixed << (double)results.refDetectTime / CLOCKS_PER_SEC << "s" << endl;
    cout << "    Match Detection time: " << setprecision(4) << fixed << (double)results.matchDetectTime / CLOCKS_PER_SEC << "s" << endl;
    cout << "           Matching time: " << setprecision(4) << fixed << (double)results.matchingTime / CLOCKS_PER_SEC << "s" << endl;
-
+   
    if ( settings.saveImage || settings.saveConfig ) {
       string outputName = buildOutputString(settings.outputLocation, results);
 
