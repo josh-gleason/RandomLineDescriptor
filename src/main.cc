@@ -178,14 +178,14 @@ void drawEllipse(Mat& image, const RotatedRect& box, const Scalar& color)
    getEllipsePoints(vertices, box, 1000U);
    drawEllipse(image, vertices, color);
 
-//#ifdef DRAW_CIRCLE
+#ifdef DRAW_CIRCLE
    //ellipse(image, box, Scalar(255,0,0));
 
    Point2f verts[4];
    box.points(verts);
    for ( int i = 0; i < 4; ++i )
       line(image, verts[i], verts[(i+1)%4], Scalar(255,0,0));
-//#endif
+#endif
 }
 
 void drawLines(Mat& image, const vector<Line>& lines, const Scalar& color)
@@ -265,7 +265,6 @@ void genRandomPoints(const Point2f& center, const Coefs& coefs, Line& linePts, c
          if ( r2 > 1.0 )
             r2 = 2 - r2;
       } else if ( settings.descriptor.type == ProgramSettings::DescriptorSettings::RAND_POINTS_GAUSSIAN ) {
-         // TODO need to give gaussian varriance in config file
          // compute random points in unit circle (normal distribution)
          t1 = randomUniform(0.0, 2*M_PI);
          t2 = randomUniform(0.0, 2*M_PI);
@@ -291,54 +290,138 @@ void genRandomPoints(const Point2f& center, const Coefs& coefs, Line& linePts, c
 
 void buildLineDescriptor(const Mat& image, Region& region, size_t regionIdx, const ProgramSettings& settings)
 {
-   // create line iterator
-   LineIterator lineIt(image, region.lines[regionIdx].first, region.lines[regionIdx].second);
-
-   int lineLen = lineIt.count;   // number of pixels in line
-
-   // copy line to vector for iteration
-   Mat lineMat(1, lineLen, CV_FTYPE);
-   for ( int i = 0; i < lineIt.count; ++i, ++lineIt )
-      lineMat.at<FType>(0,i) = (FType)(**lineIt);
+   double sum, diffs;
+      
+   Point2d& pt1 = region.lines[regionIdx].first;
+   Point2d& pt2 = region.lines[regionIdx].second;
 
    // create descriptor
    region.descriptors[regionIdx].create(Size(settings.descriptor.l, 1), CV_FTYPE);
 
-   // set first value
-   region.descriptors[regionIdx].at<FType>(0,0) = lineMat.at<FType>(0,0);
-   
-   double sum = lineMat.at<FType>(0,0);
-   double diffs = 0;
+   // linear interpolation of samples
+   if ( settings.descriptor.interpSamples ) {
+      // create line iterator (4-connected line works better than 8)
+      LineIterator lineIt(image, pt1, pt2, 4);
 
-   // linear interpolate
-   for ( int i = 1; i < settings.descriptor.l; ++i )
-   {
-      double x = (double)i * (lineLen-1.0) / (settings.descriptor.l-1.0);
-      if ( fmod(x,1.0) == 0.0 ) {
-         region.descriptors[regionIdx].at<FType>(0,i) = lineMat.at<FType>(0,(int)x);
-      } else {
-         double x1Val = lineMat.at<FType>(0,(int)x);
-         double x2Val = lineMat.at<FType>(0,((int)x)+1);
-       
-         x = fmod(x,1.0);   // floating point part of x
+      int lineLen = lineIt.count;   // number of pixels in line
 
-         region.descriptors[regionIdx].at<FType>(0,i) = x1Val + x * (x2Val - x1Val);
+      // copy line to vector for iteration
+      Mat lineMat(1, lineLen, CV_FTYPE);
+      for ( int i = 0; i < lineIt.count; ++i, ++lineIt )
+         lineMat.at<FType>(0,i) = (FType)(**lineIt);
+
+      // set first value
+      region.descriptors[regionIdx].at<FType>(0,0) = lineMat.at<FType>(0,0);
+      
+      sum = lineMat.at<FType>(0,0);
+      diffs = 0;
+      
+      // linear interpolate performed between points
+      for ( int i = 1; i < settings.descriptor.l; ++i )
+      {
+         double x = (double)i * (lineLen-1.0) / (settings.descriptor.l-1.0);
+         if ( fmod(x,1.0) == 0.0 ) {
+            region.descriptors[regionIdx].at<FType>(0,i) = lineMat.at<FType>(0,(int)x);
+         } else {
+            double x1Val = lineMat.at<FType>(0,(int)x);
+            double x2Val = lineMat.at<FType>(0,((int)x)+1);
+          
+            x = fmod(x,1.0);   // floating point part of x
+
+            region.descriptors[regionIdx].at<FType>(0,i) = x1Val + x * (x2Val - x1Val);
+         }
+
+         diffs += fabs(region.descriptors[regionIdx].at<FType>(0,i) - region.descriptors[regionIdx].at<FType>(0,i-1));
+         sum += region.descriptors[regionIdx].at<FType>(0,i);
       }
 
-      diffs += fabs(region.descriptors[regionIdx].at<FType>(0,i) - region.descriptors[regionIdx].at<FType>(0,i-1));
-      sum += region.descriptors[regionIdx].at<FType>(0,i);
-   }
+   // nearest neighbor sample
+   } else {
 
+      Point2d sample = pt1;
+      Point2d step((pt2.x - pt1.x) / (settings.descriptor.l - 1.0),
+                   (pt2.y - pt1.y) / (settings.descriptor.l - 1.0));
+
+      sum = 0.0;
+      diffs = 0.0;
+
+      // set first value
+      region.descriptors[regionIdx].at<FType>(0,0) = image.at<FType>(pt1);
+
+      for ( int i = 1; i < settings.descriptor.l; ++i )
+      {
+         // increment step
+         sample.x += step.x;
+         sample.y += step.y;
+
+         // get next sample
+         region.descriptors[regionIdx].at<FType>(i) = image.at<unsigned char>(Point2i(sample.x, sample.y));
+         sum += region.descriptors[regionIdx].at<FType>(i);
+
+         diffs += fabs(region.descriptors[regionIdx].at<FType>(i-1) - 
+                       region.descriptors[regionIdx].at<FType>(i));
+      }
+   }
    region.err[regionIdx] = diffs / (FType)(settings.descriptor.l - 1);
    region.mean[regionIdx] = sum / (FType)settings.descriptor.l;
 
    region.descriptors[regionIdx] -= region.mean[regionIdx];
 }
 
+void warpImage(const Mat& input, const RotatedRect& rect, int ksize, Mat& output, const ProgramSettings& settings)
+{
+   Point2f src[4];
+   rect.points(src);
+
+   // assumes output image is square
+   const int imageSize = output.size().width;
+   const int border = ksize/2;
+
+   Point2f dst[3] = {Point2f(border, imageSize - border),
+                     Point2f(border, border),
+                     Point2f(imageSize - border, border)};
+
+   Mat transform = getAffineTransform(src, dst);
+
+#ifdef CUBIC_INTERPOLATION
+   warpAffine(input, output, transform, output.size(), INTER_CUBIC, BORDER_REFLECT);
+#else
+   warpAffine(input, output, transform, output.size(), INTER_LINEAR, BORDER_REFLECT);
+#endif
+}
+
+void smoothImage(Mat& image, double stdDev, int ksize)
+{
+   if ( stdDev > 0.0 ) {
+      int ksize = stdDev * 4;
+      if ( ksize % 2 == 0 ) ksize++;
+      GaussianBlur(image, image, Size(ksize, ksize), stdDev);
+   }
+}
+
 void buildFeatures(Region& region, const Mat& image, size_t lineCount, const ProgramSettings& settings)
 {
+   RotatedRect warpedRect;
+   Coefs warpedCoefs;
+   Mat warpedImage(255,255,image.type());
+
    // compute coefficients for ellipse mapping from unit circle
-   computeEllipseCoef(region.ellipse, region.coefs);
+   if ( settings.descriptor.smoothRegion ) {
+      int ksize = settings.descriptor.smoothing * 4;
+      if ( ksize % 2 == 0 ) ksize++;
+
+      // compute affine transformed image
+      warpImage(image, region.ellipse, ksize, warpedImage, settings);
+      smoothImage(warpedImage, settings.descriptor.smoothing, ksize);
+
+      // compute coefficients to warp to this circle
+      warpedRect = RotatedRect(Point2f(warpedImage.size().width/2, warpedImage.size().height/2),
+         Size(warpedImage.size().width - 2*(ksize-1), warpedImage.size().height - 2*(ksize-1)), 0);
+
+      computeEllipseCoef(warpedRect, warpedCoefs);
+   } else {
+      computeEllipseCoef(region.ellipse, region.coefs);
+   }
 
    // resize vectors
    region.descriptors.resize(lineCount);
@@ -348,9 +431,16 @@ void buildFeatures(Region& region, const Mat& image, size_t lineCount, const Pro
 
    // compute descriptor for each line
    for ( size_t idx = 0; idx < lineCount; ++idx ) {
-      genRandomPoints(region.ellipse.center, region.coefs, region.lines[idx], settings);
-      buildLineDescriptor(image, region, idx, settings);
-      region.meanErr += region.err[idx];
+      if ( settings.descriptor.smoothRegion ) {
+         genRandomPoints(warpedRect.center, warpedCoefs, region.lines[idx], settings);
+         buildLineDescriptor(warpedImage, region, idx, settings);
+         region.meanErr += region.err[idx];
+      } else {
+         // sample region without computing affine transform
+         genRandomPoints(region.ellipse.center, region.coefs, region.lines[idx], settings);
+         buildLineDescriptor(image, region, idx, settings);
+         region.meanErr += region.err[idx];
+      }
    }
 
    region.meanErr /= (double)lineCount;
@@ -359,137 +449,20 @@ void buildFeatures(Region& region, const Mat& image, size_t lineCount, const Pro
    Mat img;
    cvtColor(image, img, CV_GRAY2RGB);
    drawEllipse(img, region.ellipse, Scalar(0,255,0));
-   drawLines(img, region.lines, Scalar(0,0,255));
-   
+   if ( !settings.descriptor.smoothRegion )
+      drawLines(img, region.lines, Scalar(0,0,255));
    imshow("Image", img);
-   waitKey(0);
-#endif
-}
-
-// image must be grayscale
-void buildSmoothedFeatures(Region& region, const Mat& image, size_t lineCount,
-   int featureSize, double smoothing, double minDist)
-{
-   // compute affine transform for normalization
-   Point2f src[4];
-   region.ellipse.points(src);
-
-   int ksize = smoothing * 4;
-   if ( ksize % 2 == 0 ) ksize++;
-
-   const int imageSize = 255;
-   const int border = ksize/2;
-
-   minDist *= imageSize;
-
-   Point2f dst[3] = {Point2f(border, imageSize - border),
-                     Point2f(border, border),
-                     Point2f(imageSize - border, border)};
-
-   Mat transform = getAffineTransform(src, dst);
-
-   // transform image
-   Mat normImg(imageSize, imageSize, image.type());
-   warpAffine(image, normImg, transform, Size(imageSize, imageSize),
-#ifdef CUBIC_INTERPOLATION
-              INTER_CUBIC, BORDER_REFLECT);
-#else
-              INTER_LINEAR, BORDER_REFLECT);
-#endif
-   // smoooth image
-   if ( smoothing > 0.0 )
-      GaussianBlur(normImg, normImg, Size(ksize,ksize), smoothing);
-
-   Point center(imageSize/2, imageSize/2);
-   double radius = imageSize/2 - border;
-
-#ifdef DRAW_CIRCLE
-   // draw circle
-   circle(normImg, center, radius, Scalar(255,0,0)); 
-
-   Mat imageColor;
-   cvtColor(image, imageColor, CV_GRAY2RGB);
-
-   drawEllipse(imageColor, region.ellipse, Scalar(255,255,0));
-
-   imshow("ImageRegion", normImg);
-   imshow("Image", imageColor);
-   waitKey(0);
-#endif
-
-   // compute descriptor
-   region.descriptors.resize(lineCount);
-   region.mean.resize(lineCount);
-   region.err.resize(lineCount);
-   region.lines.resize(lineCount);
-
-   // features
-   // pixel1, pixel2, pixel3 ..., pixelN, mean, err
-
-   // mean = sum(pixels)/(featureSize-2)
-   // err = sum(|pixel_n - pixel_n+1|)_n={1,featureSize-3}/(featureSize-3)
-
-   for ( size_t i = 0; i < lineCount; ++i )
-   {
-      // generate random line
-      double theta1, theta2;
-
-      // generate random point
-      Point2d p1, p2;
-      do {
-         theta1 = ((rand() % 10000) / 10000.0) * 2 * M_PI;
-         theta2 = ((rand() % 10000) / 10000.0) * 2 * M_PI;
-
-         p1.x = center.x + radius*cos(theta1);
-         p1.y = center.y + radius*sin(theta1);
-         p2.x = center.x + radius*cos(theta2);
-         p2.y = center.y + radius*sin(theta2);
-      } while (sqrt((p1.x-p2.x)*(p1.x-p2.x)+(p1.y-p2.y)*(p1.y-p2.y)) < minDist);
-
-#ifdef DRAW_CIRCLE
-      // draw line
-      line(normImg, p1, p2, Scalar(0,0,0), 1);
-#endif
-      // save the lines in case they are needed later
-      region.lines[i] = Line(p1,p2);
-
-      Mat& feat = region.descriptors[i];
-      feat.create(1, featureSize, CV_FTYPE);
-
-      Point2d sample = p1;
-      Point2d step((p2.x - p1.x) / (featureSize - 1.0),
-                   (p2.y - p1.y) / (featureSize - 1.0));
-
-      double sum = 0.0;
-      double diffSum = 0.0;
-      
-      for ( int j = 0; j < featureSize; ++j )
-      {
-         feat.at<FType>(j) = normImg.at<unsigned char>(Point2i(sample.x,sample.y));
-         sum += feat.at<FType>(j);
-
-         if ( j != 0 )
-            diffSum += fabs(feat.at<FType>(j-1)-feat.at<FType>(j));
-
-         // increment step
-         sample.x += step.x;
-         sample.y += step.y;
-      }
-
-      // store mean
-      region.mean[i] = (FType)(sum / (featureSize));
-      region.err[i] = (FType)(diffSum / (featureSize - 1.0));
-
-      // subtract mean for feat
-      feat -= region.mean[i];
-   }
    
-#ifdef DRAW_CIRCLE
-   imshow("ImageRegion", normImg);
+   if ( settings.descriptor.smoothRegion ) {
+      cvtColor(warpedImage, img, CV_GRAY2RGB);
+      drawEllipse(img, warpedRect, Scalar(0,255,0));
+      imshow("ImageWin", img);
+      waitKey(0);
+      drawLines(img, region.lines, Scalar(0,0,255));
+      imshow("ImageWin", img);
+   }
    waitKey(0);
 #endif
-
-//   region.errMax = *max_element(region.err.begin(), region.err.end());
 }
 
 // color image input
@@ -561,19 +534,10 @@ void extractRegions(vector<Region>& regions, const Mat& image, const ProgramSett
    {
       RotatedRect& r = ellipses[i];
       regions[i].ellipse = r;
-
-      if ( settings.descriptor.smoothRegion ) {  // SLOW VERSION
-         if ( referenceImage ) {
-            buildSmoothedFeatures(regions[i], grayImage, s.Nk, s.l, s.smoothing, s.minDist); 
-         } else {
-            buildSmoothedFeatures(regions[i], grayImage, s.N, s.l, s.smoothing, s.minDist); 
-         }
-      } else { // Much faster
-         if ( referenceImage ) {
-            buildFeatures(regions[i], grayImage, s.Nk, settings); 
-         } else {
-            buildFeatures(regions[i], grayImage, s.N, settings); 
-         }
+      if ( referenceImage ) {
+         buildFeatures(regions[i], grayImage, s.Nk, settings); 
+      } else {
+         buildFeatures(regions[i], grayImage, s.N, settings); 
       }
 
       if ( regions[i].meanErr < settings.descriptor.minMeanErr )

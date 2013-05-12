@@ -109,6 +109,7 @@ void writeConfig(const string& filename, ProgramSettings& settings)
    fout << "DES_ELLIPSE_POINTS = " << d.ellipsePoints << endl;
    fout << "DES_SAMPLE_TYPE = " << (int)d.type << endl;
    fout << "DES_NORM_STD_DEV = " << d.gaussStdDev << endl;
+   fout << "DES_INTERPOLATE_SAMPLES = " << d.interpSamples << endl;
    fout << "DES_L = " << d.l << endl;
    fout << "DES_NK = " << d.Nk << endl;
    fout << "DES_N = " << d.N << endl;
@@ -185,6 +186,8 @@ bool parseSettings(int argc, char* argv[], ProgramSettings& settings)
       ("DES_SAMPLE_TYPE", po::value<ProgramSettings::DescriptorSettings::PointPos>(&d.type)->required(),
          "")
       ("DES_NORM_STD_DEV", po::value<double>(&d.gaussStdDev)->required(),
+         "")
+      ("DES_INTERPOLATE_SAMPLES", po::value<bool>(&d.interpSamples)->required(),
          "")
       ("DES_L", po::value<int>(&d.l)->required(),
          "")

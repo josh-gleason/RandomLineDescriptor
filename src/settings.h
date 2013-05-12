@@ -119,6 +119,8 @@ struct ProgramSettings {
                      //                       a distance of 1 from the center)
 
       double gaussStdDev;   // Used with RAND_POINT_GAUSSIAN
+
+      bool interpSamples;  // if true use linear interpolation when sampling lines (otherwise nearest neighbor)
    };
 
    MserSettings mser;
