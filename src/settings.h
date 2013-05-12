@@ -51,6 +51,11 @@ struct ProgramSettings {
 
    
    struct DescriptorSettings {
+      enum PointPos{
+         EDGE_POINTS=0,
+         RAND_POINTS_UNIFORM=1,
+         RAND_POINTS_GAUSSIAN=2};
+
       DescriptorSettings() :
          ellipseSize(2.0),
          ellipsePoints(512U),
@@ -73,7 +78,9 @@ struct ProgramSettings {
          w1(1.0),
          w2(1.0),
          smoothRegion(false),
-         smoothing(2.5)
+         smoothing(2.5),
+         type(RAND_POINTS_GAUSSIAN),
+         gaussStdDev(0.3)
       {}
 
       double ellipseSize;  // scale factor of ellipse to min bounding box
@@ -85,7 +92,7 @@ struct ProgramSettings {
 
       int kdTrees;   // number of KDTrees used in FLANN
 
-      double minDist; // minimum allowed length of line (with respect to sqrt(area) of region)
+      double minDist; // minimum allowed length of line (assuming region normalized to unit circle)
 
       double minCmf;  // minimum acceptable CMF score for matching
       double maxCmf;  // maximum acceptable CMF score for matching
@@ -101,6 +108,17 @@ struct ProgramSettings {
 
       bool smoothRegion;   // smooth the region? (smoothing doesn't matter if this is false)
       double smoothing; // strength of smoothing (relative to scale of region)
+
+      PointPos type; // How the positions of lines are sampled
+                     // EDGE_POINTS: sample points on edge of ellipse
+                     // RAND_POINTS_UNIFORM: sample points from anywhere in the ellipse using a
+                     //                      uniform distribution
+                     // RAND_POINTS_GAUSSIAN: sample points from inside the ellipse using a
+                     //                       normal distribution (centered at center of ellipse
+                     //                       with variance normalized so that edge of ellipse represents
+                     //                       a distance of 1 from the center)
+
+      double gaussStdDev;   // Used with RAND_POINT_GAUSSIAN
    };
 
    MserSettings mser;

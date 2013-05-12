@@ -7,6 +7,7 @@
 #include <ctime>
 #include <iomanip>
 #include <deque>
+#include <random>
 
 #include <boost/geometry.hpp>
 #include <boost/geometry/geometries/point_xy.hpp>
@@ -21,6 +22,10 @@ using namespace std;
 namespace bg = boost::geometry;
 
 //#define CUBIC_INTERPOLATION
+
+// Used for debugging
+//#define DRAW_CIRCLE
+//#define DRAW_RES
 
 // ideas
 // Reject threshold based on how many matches belonged to first vs. second class
@@ -52,6 +57,11 @@ struct Match {
 
 const int CV_FTYPE = CV_32FC1;
 typedef float FType;
+   
+// coefficients for transforming unit circle to ellipse
+struct Coefs{
+   double a, b, t;
+}; 
 
 struct Region {
    RotatedRect ellipse;
@@ -59,6 +69,8 @@ struct Region {
    vector<Mat> descriptors;
    vector<double> mean;
    vector<double> err;
+
+   Coefs coefs;
 
    long int baseIdx;
 
@@ -68,6 +80,8 @@ struct Region {
 void getEllipsePoints(vector<Point2d>& vertices, const RotatedRect& box, size_t points=1000U);
 void drawEllipse(Mat& image, const RotatedRect& box, const Scalar& color = Scalar(0,0,255));
 void drawEllipse(Mat& image, const vector<Point2d>& vertices, const Scalar& color = Scalar(0,0,255));
+
+#if 0
 void genLines(Region& region, const vector<Point2d>& vertices, double minDist=1.0, size_t pairCount=50);
 
 void genLines(Region& region, const vector<Point2d>& vertices, double minDist, size_t pairCount)
@@ -96,11 +110,15 @@ void genLines(Region& region, const vector<Point2d>& vertices, double minDist, s
       region.lines[i] = p;
    }
 }
+#endif
 
-void getEllipsePoints(vector<Point2d>& vertices, const RotatedRect& box, size_t points)
+void computeEllipseCoef(const RotatedRect& box, Coefs& coefs)
 {
+   // from point within unit circle r1, t1
+   // t2 = t1+t;
+   // r2 = r1*a*b / sqrt(b*b*cos(t1-M_PI/2)*cos(t1-M_PI/2) + a*a*sin(t1-M_PI/2)*sin(t1-M_PI/2))
+
    RotatedRect r = box;
-  
    if ( r.size.height < r.size.width )
    {
       r.size.height = box.size.width;
@@ -109,31 +127,43 @@ void getEllipsePoints(vector<Point2d>& vertices, const RotatedRect& box, size_t 
       r.angle = (box.angle + 90.0);
    }
    
-   r.angle *= M_PI / 180.0f;
+   coefs.t = r.angle * M_PI / 180.0f;
+   coefs.a = r.size.height / 2.0;
+   coefs.b = r.size.width / 2.0;
+}
 
-   double a = r.size.height / 2.0;
-   double b = r.size.width / 2.0;
-   
+// transform a radius and angle from the unit circle to the ellipse described by a, b, and t.
+// get a, b, and t from computeEllipseCoef function (assumes ellipse centered at 0,0)
+void ellipseTransform(double r1, double t1, const Coefs& coefs, double& r2, double& t2)
+{
+   double bCos = coefs.b * cos(t1-M_PI/2);
+   double aSin = coefs.a * sin(t1-M_PI/2);
+
+   t2 = t1 + coefs.t;
+   r2 = r1 * coefs.a * coefs.b / sqrt(bCos * bCos + aSin * aSin); 
+}
+
+// Used to approximate intersection of two ellipses
+void getEllipsePoints(vector<Point2d>& vertices, const RotatedRect& box, size_t points)
+{
+   Coefs coefs;
+   computeEllipseCoef(box, coefs);
+
    double step = 2 * M_PI / points;
    double theta = 2 * M_PI;
 
-   double bCos, aSin, radius;
+   double radius, ang;
 
    // clockwise to make area work with boost
    vertices.resize(points);
    for ( size_t i = 0; i < points; ++i )
    {
-      bCos = a * cos(theta);
-      aSin = b * sin(theta);
-      radius = a * b / sqrt(bCos * bCos + aSin * aSin);
-
+      ellipseTransform(1.0, theta, coefs, radius, ang);
       vertices[i] = Point2f(
-         r.center.x + radius * cos(theta+r.angle),
-         r.center.y + radius * sin(theta+r.angle));
-
+         box.center.x + radius * cos(ang),
+         box.center.y + radius * sin(ang));
       theta -= step;
    }
-
 }
 
 void drawEllipse(Mat& image, const vector<Point2d>& vertices, const Scalar& color)
@@ -146,17 +176,16 @@ void drawEllipse(Mat& image, const RotatedRect& box, const Scalar& color)
 {
    vector<Point2d> vertices(1000U);
    getEllipsePoints(vertices, box, 1000U);
-
    drawEllipse(image, vertices, color);
 
-/*
-   ellipse(image, box, Scalar(255,0,0));
+//#ifdef DRAW_CIRCLE
+   //ellipse(image, box, Scalar(255,0,0));
 
    Point2f verts[4];
    box.points(verts);
    for ( int i = 0; i < 4; ++i )
       line(image, verts[i], verts[(i+1)%4], Scalar(255,0,0));
-*/
+//#endif
 }
 
 void drawLines(Mat& image, const vector<Line>& lines, const Scalar& color)
@@ -184,82 +213,157 @@ double dist(const Point2d& p1, const Point2d& p2)
    return sqrt( (p1.x-p2.x)*(p1.x-p2.x)+(p1.y-p2.y)*(p1.y-p2.y) );
 }
 
+double polarDist(double r1, double r2, double t1, double t2)
+{
+   return sqrt( r1*r1 + r2*r2 - 2*r1*r2*cos(t1-t2) );
+}
+
+bool minDistCheck( double r1, double r2, double t1, double t2, const ProgramSettings& settings )
+{
+   if ( settings.descriptor.minDist <= 0 )
+      return r1 != r2 || t1 != t2;
+   return polarDist(r1, r2, t1, t2) > settings.descriptor.minDist;
+}
+
+double randomUniform(double min, double max)
+{
+   static default_random_engine gen(time(0));
+   uniform_real_distribution<double> uDist(min, max);
+   return uDist(gen);
+}
+
+double randomNormal(double mean, double stdDev)
+{
+   static default_random_engine gen(time(0));
+   normal_distribution<double> nDist(mean, stdDev);
+   return nDist(gen);
+}
+
+// generate two random points in a given region (assumes the coefficients in the region are already computed)
+void genRandomPoints(const Point2f& center, const Coefs& coefs, Line& linePts, const ProgramSettings& settings)
+{
+   double r1, r2, t1, t2;
+   do {
+      // generate random points in a unit circle (working in polar coords, convert later)
+      if ( settings.descriptor.type == ProgramSettings::DescriptorSettings::EDGE_POINTS ) {
+         // pick random points on edge of circle
+         t1 = randomUniform(0.0, 2.0*M_PI);
+         t2 = randomUniform(0.0, 2.0*M_PI);
+         r1 = r2 = 1.0;
+
+      } else if ( settings.descriptor.type == ProgramSettings::DescriptorSettings::RAND_POINTS_UNIFORM ) {
+         // http://stackoverflow.com/questions/5837572/generate-a-random-point-within-a-circle-uniformly
+         // compute random point in unit circle (uniform distribution)
+         t1 = randomUniform(0.0, 2.0*M_PI);
+         t2 = randomUniform(0.0, 2.0*M_PI);
+         
+         r1 = randomUniform(0.0, 1.0) + randomUniform(0.0, 1.0);
+         r2 = randomUniform(0.0, 1.0) + randomUniform(0.0, 1.0);
+
+         if ( r1 > 1.0 )
+            r1 = 2 - r1;
+         if ( r2 > 1.0 )
+            r2 = 2 - r2;
+      } else if ( settings.descriptor.type == ProgramSettings::DescriptorSettings::RAND_POINTS_GAUSSIAN ) {
+         // TODO need to give gaussian varriance in config file
+         // compute random points in unit circle (normal distribution)
+         t1 = randomUniform(0.0, 2*M_PI);
+         t2 = randomUniform(0.0, 2*M_PI);
+
+         r1 = min(1.0, fabs(randomNormal(0.0, settings.descriptor.gaussStdDev)));
+         r2 = min(1.0, fabs(randomNormal(0.0, settings.descriptor.gaussStdDev)));
+      }
+   } while ( !minDistCheck(r1, t1, r2, t2, settings) );
+        
+   // map to ellipse
+   ellipseTransform(r1, t1, coefs, r1, t1);
+   ellipseTransform(r2, t2, coefs, r2, t2);
+
+   // convert to rectangular
+   linePts.first = Point2d(r1*cos(t1) + center.x,
+                           r1*sin(t1) + center.y);
+   
+   linePts.second = Point2d(r2*cos(t2) + center.x,
+                            r2*sin(t2) + center.y);
+
+   // TODO return a bool representing if points were found
+}
+
+void buildLineDescriptor(const Mat& image, Region& region, size_t regionIdx, const ProgramSettings& settings)
+{
+   // create line iterator
+   LineIterator lineIt(image, region.lines[regionIdx].first, region.lines[regionIdx].second);
+
+   int lineLen = lineIt.count;   // number of pixels in line
+
+   // copy line to vector for iteration
+   Mat lineMat(1, lineLen, CV_FTYPE);
+   for ( int i = 0; i < lineIt.count; ++i, ++lineIt )
+      lineMat.at<FType>(0,i) = (FType)(**lineIt);
+
+   // create descriptor
+   region.descriptors[regionIdx].create(Size(settings.descriptor.l, 1), CV_FTYPE);
+
+   // set first value
+   region.descriptors[regionIdx].at<FType>(0,0) = lineMat.at<FType>(0,0);
+   
+   double sum = lineMat.at<FType>(0,0);
+   double diffs = 0;
+
+   // linear interpolate
+   for ( int i = 1; i < settings.descriptor.l; ++i )
+   {
+      double x = (double)i * (lineLen-1.0) / (settings.descriptor.l-1.0);
+      if ( fmod(x,1.0) == 0.0 ) {
+         region.descriptors[regionIdx].at<FType>(0,i) = lineMat.at<FType>(0,(int)x);
+      } else {
+         double x1Val = lineMat.at<FType>(0,(int)x);
+         double x2Val = lineMat.at<FType>(0,((int)x)+1);
+       
+         x = fmod(x,1.0);   // floating point part of x
+
+         region.descriptors[regionIdx].at<FType>(0,i) = x1Val + x * (x2Val - x1Val);
+      }
+
+      diffs += fabs(region.descriptors[regionIdx].at<FType>(0,i) - region.descriptors[regionIdx].at<FType>(0,i-1));
+      sum += region.descriptors[regionIdx].at<FType>(0,i);
+   }
+
+   region.err[regionIdx] = diffs / (FType)(settings.descriptor.l - 1);
+   region.mean[regionIdx] = sum / (FType)settings.descriptor.l;
+
+   region.descriptors[regionIdx] -= region.mean[regionIdx];
+}
+
 void buildFeatures(Region& region, const Mat& image, size_t lineCount, const ProgramSettings& settings)
 {
-   static vector<Point2d> verts;
-   getEllipsePoints(verts, region.ellipse, settings.descriptor.ellipsePoints);
-   
+   // compute coefficients for ellipse mapping from unit circle
+   computeEllipseCoef(region.ellipse, region.coefs);
+
    // resize vectors
    region.descriptors.resize(lineCount);
    region.mean.resize(lineCount);
    region.err.resize(lineCount);
    region.lines.resize(lineCount);
 
-   // compute descriptors
-   for ( int idx = 0; idx < lineCount; ++idx ) {
-      // choose two random vertices
-      int idx1, idx2;
-
-      // pick random points
-      if ( settings.descriptor.minDist <= 0 ) {
-         do {
-            idx1 = rand() % settings.descriptor.ellipsePoints;
-            idx2 = rand() % settings.descriptor.ellipsePoints;
-         } while ( idx1 == idx2 );
-      } else {
-         do {
-            idx1 = rand() % settings.descriptor.ellipsePoints;
-            idx2 = rand() % settings.descriptor.ellipsePoints;
-         } while ( dist(verts[idx1],verts[idx2]) <= settings.descriptor.minDist );
-      }
-
-      // create line iterator
-      LineIterator line(image, verts[idx1], verts[idx2]);
-
-      int lineLen = line.count;   // number of pixels in line
-
-      // copy line to vector for iteration
-      Mat lineMat(1, lineLen, CV_FTYPE);
-      for ( int i = 0; i < line.count; ++i, ++line )
-         lineMat.at<FType>(0,i) = (FType)(**line);
-
-      // create descriptor
-      region.descriptors[idx].create(Size(settings.descriptor.l, 1), CV_FTYPE);
-
-      // set first value
-      region.descriptors[idx].at<FType>(0,0) = lineMat.at<FType>(0,0);
-      
-      double sum = lineMat.at<FType>(0,0);
-      double diffs = 0;
-
-      // linear interpolate
-      for ( int i = 1; i < settings.descriptor.l; ++i )
-      {
-         double x = (double)i * (lineLen-1.0) / (settings.descriptor.l-1.0);
-         if ( fmod(x,1.0) == 0.0 ) {
-            region.descriptors[idx].at<FType>(0,i) = lineMat.at<FType>(0,(int)x);
-         } else {
-            double x1Val = lineMat.at<FType>(0,(int)x);
-            double x2Val = lineMat.at<FType>(0,((int)x)+1);
-          
-            x = fmod(x,1.0);   // floating point part of x
-
-            region.descriptors[idx].at<FType>(0,i) = x1Val + x * (x2Val - x1Val);
-         }
-
-         diffs += fabs(region.descriptors[idx].at<FType>(0,i) - region.descriptors[idx].at<FType>(0,i-1));
-         sum += region.descriptors[idx].at<FType>(0,i);
-      }
-
-      region.err[idx] = diffs / (FType)(settings.descriptor.l - 1);
-      region.mean[idx] = sum / (FType)settings.descriptor.l;
-
+   // compute descriptor for each line
+   for ( size_t idx = 0; idx < lineCount; ++idx ) {
+      genRandomPoints(region.ellipse.center, region.coefs, region.lines[idx], settings);
+      buildLineDescriptor(image, region, idx, settings);
       region.meanErr += region.err[idx];
-
-      region.descriptors[idx] -= region.mean[idx];
    }
-  
+
    region.meanErr /= (double)lineCount;
+
+#ifdef DRAW_CIRCLE
+   Mat img;
+   cvtColor(image, img, CV_GRAY2RGB);
+   drawEllipse(img, region.ellipse, Scalar(0,255,0));
+   drawLines(img, region.lines, Scalar(0,0,255));
+   
+   imshow("Image", img);
+   waitKey(0);
+#endif
 }
 
 // image must be grayscale
@@ -761,6 +865,13 @@ void calcResults(Mat& output, Results& results, const ProgramSettings& settings,
 
       RotatedRect matchEllipse = matchRegions[matches[i].matchIndex].ellipse;
       RotatedRect refEllipse = refRegions[matches[i].refIndex].ellipse;
+
+#ifdef DRAW_RES
+      drawEllipse(output, matchEllipse, Scalar(255,0,0));
+      drawEllipse(output, refEllipse, Scalar(0,255,0));
+      imshow("Res",output);
+      waitKey(0);
+#endif
 
       // matchEllipse.size.width /= settings.descriptor.ellipseSize;
       // matchEllipse.size.height /= settings.descriptor.ellipseSize;
