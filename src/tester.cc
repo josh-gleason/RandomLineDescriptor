@@ -6,7 +6,8 @@
 
 #define COUT_ENABLE
 
-int computeCorrespondencies(const vector<Region>& matchRegions, const vector<Region>& refRegions, string homography)
+void computeCorrespondencies(const vector<Region>& matchRegions, const vector<Region>& refRegions, string homography,
+ vector<bool>& corresponds)
 {
    Mat T(3,3,CV_64FC1);
    ifstream fin(homography);
@@ -18,15 +19,15 @@ int computeCorrespondencies(const vector<Region>& matchRegions, const vector<Reg
    T = T.inv();
    
    // takes some time only do this once
-   int corr = 0;
-   for (size_t i = 0; i < matchRegions.size(); ++i )
+   corresponds.resize(matchRegions.size());
+   for (size_t i = 0; i < matchRegions.size(); ++i ) {
+      corresponds[i] = false;
       for (size_t j = 0; j < refRegions.size(); ++j )
          if ( getMatchScore(refRegions[j].ellipse, matchRegions[i].ellipse, T, ProgramSettings()) > 0.5 ) {
-            corr++;
+            corresponds[i] = true;
             break;
          }
-
-   return corr;
+   }
 }
 
 int main(int argc, char *argv[])
@@ -57,11 +58,10 @@ int main(int argc, char *argv[])
    extractRegions(matchRegions, matchImage, settings, false);
    results.matchDetectTime = clock() - t;
 
-   int corr = computeCorrespondencies(matchRegions, refRegions, settings.homographyFile);
+   // holds list of correspondencies
+   vector<bool> corresponds;
 
-#ifdef COUT_ENABLE
-   cout << "Correspondencies: " << corr << endl; 
-#endif
+   computeCorrespondencies(matchRegions, refRegions, settings.homographyFile, corresponds);
 
    matches.clear();
 
@@ -88,8 +88,9 @@ int main(int argc, char *argv[])
    {
       settings.descriptor.maxCmf = maxCmf;
       
-      calcResults(output, results, settings, matches, refRegions, matchRegions, refImage, matchImage);
+      calcResults(output, results, settings, matches, refRegions, matchRegions, refImage, matchImage, true, corresponds);
 
+/*
       if ( results.correctMatches + results.incorrectMatches == 0 )
          precision.push_back(0.0);
       else
@@ -99,10 +100,15 @@ int main(int argc, char *argv[])
          recall.push_back(0.0);  // shouldn't happen
       else
          recall.push_back(results.correctMatches / (double)corr);
-     
-      int noncorr = results.incorrectMatches + matchRegions.size() - corr;
+*/
 
-      fprate.push_back(results.incorrectMatches / (double)noncorr);
+//      int noncorr = results.incorrectMatches + matchRegions.size() - corr;
+
+//      fprate.push_back(results.incorrectMatches / (double)noncorr);
+      
+      precision.push_back(1.0-results.accuracy/100.0);
+      recall.push_back(results.tpr);
+      fprate.push_back(results.fpr);
 
 #ifdef COUT_ENABLE
       // Output results
@@ -127,8 +133,8 @@ int main(int argc, char *argv[])
    {
       settings.descriptor.minMatches = minMatches;
 
-      calcResults(output, results, settings, matches, refRegions, matchRegions, refImage, matchImage);
-
+      calcResults(output, results, settings, matches, refRegions, matchRegions, refImage, matchImage, true, corresponds);
+      /*
       if ( results.correctMatches + results.incorrectMatches == 0 )
          precision.push_back(0.0);
       else
@@ -145,6 +151,10 @@ int main(int argc, char *argv[])
          fprate.push_back(0.0);
       else
          fprate.push_back(results.incorrectMatches / (double)noncorr);
+      */
+      precision.push_back(1.0-results.accuracy/100.0);
+      recall.push_back(results.tpr);
+      fprate.push_back(results.fpr);
 
 #ifdef COUT_ENABLE
       // Output results

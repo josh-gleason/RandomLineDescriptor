@@ -96,8 +96,8 @@ void drawEllipse(Mat& image, const RotatedRect& box, const Scalar& color = Scala
 void drawEllipse(Mat& image, const vector<Point2d>& vertices, const Scalar& color = Scalar(0,0,255));
 void calcResults(Mat& output, Results& results, const ProgramSettings& settings,
    const vector<Match>& matches, const vector<Region>& refRegions,
-   const vector<Region>& matchRegions, const Mat& refImage, const Mat& matchImage);
-
+   const vector<Region>& matchRegions, const Mat& refImage, const Mat& matchImage, bool calcTrueNeg=false,
+   const vector<bool>& corresponds=vector<bool>());
 #if 0
 void genLines(Region& region, const vector<Point2d>& vertices, double minDist=1.0, size_t pairCount=50);
 
@@ -260,16 +260,18 @@ double randomNormal(double mean, double stdDev)
 void genRandomPoints(const Point2f& center, const Coefs& coefs, Line& linePts, const ProgramSettings& settings, int idx)
 {
    double r1, r2, t1, t2;
-   double step = 2*M_PI / (1.0+min(settings.descriptor.N,settings.descriptor.Nk));
+   double step = 2*M_PI / (min(settings.descriptor.N,settings.descriptor.Nk));
    do {
       // generate random points in a unit circle (working in polar coords, convert later)
       if ( settings.descriptor.type == ProgramSettings::DescriptorSettings::EDGE_POINTS ) {
          // pick random points on edge of circle
          //t1 = randomUniform(0.0, 2.0*M_PI);
+         //t2 = randomUniform(0.0, 2.0*M_PI);
+         
+         // use a structured pattern instead (works better)
          t1 = idx*step;
          t2 = t1 - M_PI;
 
-         //t2 = randomUniform(0.0, 2.0*M_PI);
          r1 = r2 = 1.0;
 
       } else if ( settings.descriptor.type == ProgramSettings::DescriptorSettings::RAND_POINTS_UNIFORM ) {
@@ -861,7 +863,8 @@ double getMatchScore(const RotatedRect& refEllipse, const RotatedRect& matchElli
 
 void calcResults(Mat& output, Results& results, const ProgramSettings& settings,
    const vector<Match>& matches, const vector<Region>& refRegions,
-   const vector<Region>& matchRegions, const Mat& refImage, const Mat& matchImage )
+   const vector<Region>& matchRegions, const Mat& refImage, const Mat& matchImage,
+   bool calcTprFpr, const vector<bool>& corresponds)
 {
    // initialize output results
    output.create(max(refImage.size().height, matchImage.size().height),
@@ -874,7 +877,7 @@ void calcResults(Mat& output, Results& results, const ProgramSettings& settings,
 
    vector<bool> acceptMatch(matches.size());
    vector<bool> goodMatch(matches.size());
-   
+
    int idx = 0;
    // filter bad matches
    for ( const Match& m : matches )
@@ -895,14 +898,26 @@ void calcResults(Mat& output, Results& results, const ProgramSettings& settings,
    fin.close();
 
    T = T.inv();
-   
+
    // transform points
    int goodMatches = 0;
    int totalMatches = 0;
+
+   if ( calcTprFpr ) {
+      results.trueNeg = 0;
+      results.falseNeg = 0;
+   }
    for ( size_t i = 0; i < matches.size(); ++i )
    {
-      if ( !acceptMatch[i] )
+      if ( !acceptMatch[i] ) {
+         // compute false and true negatives
+         if ( calcTprFpr && !corresponds[i] )
+            results.trueNeg++;
+         else if ( calcTprFpr )
+            results.falseNeg++;
+
          continue;
+      }
 
       RotatedRect matchEllipse = matchRegions[matches[i].matchIndex].ellipse;
       RotatedRect refEllipse = refRegions[matches[i].refIndex].ellipse;
@@ -967,10 +982,18 @@ void calcResults(Mat& output, Results& results, const ProgramSettings& settings,
          }
       }
    }
-
+   
    results.correctMatches = goodMatches;
    results.incorrectMatches = totalMatches - goodMatches;
    results.accuracy = 100.0 * goodMatches / totalMatches;
+
+   if ( calcTprFpr )
+   {
+      cout << "False Neg: " << results.falseNeg << endl;
+      cout << "True Neg:  " << results.trueNeg << endl;
+      results.tpr = (double)results.correctMatches / (results.falseNeg + results.correctMatches);
+      results.fpr = (double)results.incorrectMatches / (results.trueNeg + results.incorrectMatches);
+   }
 
    //cout << myCmf << "    " << results.correctMatches << ":" << results.incorrectMatches << ":" << results.accuracy << endl;
 }

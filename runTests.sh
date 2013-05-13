@@ -13,12 +13,12 @@ do
       HOMOGRAPHY="../TestImages/${bases[i]}/H1to${n}p"
 
       TITLE="Precision-Recall ${bases[i]}${n}"
-      OUTPUT_PDF="${bases[i]}${n}_PR.pdf"
+      OUTPUT_PDF="${bases[i]}${n}_PR.png"
 
       ROCTIT="ROC Curve ${bases[i]}${n}"
-      ROC_PDF="${bases[i]}${n}_ROC.pdf"
+      ROC_PDF="${bases[i]}${n}_ROC.png"
 
-      ./bin/tester -c ./bin/config.cfg --SHOW_IMG=0 --SAVE_IMG=0 --SAVE_CONFIG=0 --REF_IMG=${REFIMG} --MAT_IMG=${MATIMG} --HOMOG=${HOMOGRAPHY} && octave --silent --eval "plotter(\"PR.csv\",\"${TITLE}\",\"${OUTPUT_PDF}\",\"${ROCTIT}\",\"${ROC_PDF}\")" && pdfcrop --margins 10 ${OUTPUT_PDF} ${OUTPUT_PDF}
+      ./bin/tester -c ./bin/config.cfg --SHOW_IMG=0 --SAVE_IMG=0 --SAVE_CONFIG=0 --REF_IMG=${REFIMG} --MAT_IMG=${MATIMG} --HOMOG=${HOMOGRAPHY} && octave --silent --eval "plotter(\"PR.csv\",\"${TITLE}\",\"${OUTPUT_PDF}\",\"${ROCTIT}\",\"${ROC_PDF}\")"
    done
 done
 
