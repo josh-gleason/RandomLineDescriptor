@@ -1,9 +1,12 @@
 FLAGS=`pkg-config opencv --cflags` -std=c++11 -O3
 LIBS=`pkg-config opencv --libs` -lboost_program_options -lboost_system -lboost_filesystem
 
-all: bin/main
+all: bin/main bin/tester
 
-bin/main: src/main.cc src/settings.h src/results.h build/settings.o Makefile
+bin/tester: src/tester.cc src/matcher.h src/settings.h src/results.h build/settings.o Makefile
+	g++ ${FLAGS} src/tester.cc build/settings.o ${LIBS} -o bin/tester
+
+bin/main: src/main.cc src/matcher.h src/settings.h src/results.h build/settings.o Makefile
 	g++ ${FLAGS} src/main.cc build/settings.o ${LIBS} -o bin/main
 
 build/settings.o: src/settings.h src/results.h src/settings.cc Makefile

@@ -138,7 +138,7 @@ bool parseSettings(int argc, char* argv[], ProgramSettings& settings)
    po::options_description generic("Allowed options");
    generic.add_options()
       ("help", "produce help message")
-      ("CONFIG_FILES,c", po::value<string>(&configFile)->default_value(DEFAULT_CONFIG),
+      ("CONFIG_FILE,c", po::value<string>(&configFile)->default_value(DEFAULT_CONFIG),
          "Configuration file.")
    ;
 
@@ -228,7 +228,7 @@ bool parseSettings(int argc, char* argv[], ProgramSettings& settings)
    // parse for help file and config file
    try {
       po::variables_map vm;
-      po::store(po::parse_command_line(argc, argv, generic), vm);
+      po::store(po::parse_command_line(min(argc,3), argv, generic), vm);
 
       // check for help first
       if ( vm.count("help") )
@@ -261,8 +261,8 @@ bool parseSettings(int argc, char* argv[], ProgramSettings& settings)
 
       fin.close();
    } catch (std::exception& e) {
-      cout << "Parsing Error: " << e.what() << endl;
-      return false;
+//      cout << "Parsing Error: " << e.what() << endl;
+//      return false;
    }
 
    return true;
