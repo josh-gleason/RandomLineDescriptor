@@ -19,9 +19,9 @@ int computeCorrespondencies(const vector<Region>& matchRegions, const vector<Reg
    
    // takes some time only do this once
    int corr = 0;
-   for (size_t i = 0; i < refRegions.size(); ++i )
-      for (size_t j = 0; j < matchRegions.size(); ++j )
-         if ( getMatchScore(refRegions[i].ellipse, matchRegions[j].ellipse, T, ProgramSettings()) > 0.5 ) {
+   for (size_t i = 0; i < matchRegions.size(); ++i )
+      for (size_t j = 0; j < refRegions.size(); ++j )
+         if ( getMatchScore(refRegions[j].ellipse, matchRegions[i].ellipse, T, ProgramSettings()) > 0.5 ) {
             corr++;
             break;
          }
@@ -58,7 +58,7 @@ int main(int argc, char *argv[])
    results.matchDetectTime = clock() - t;
 
    int corr = computeCorrespondencies(matchRegions, refRegions, settings.homographyFile);
-   
+
 #ifdef COUT_ENABLE
    cout << "Correspondencies: " << corr << endl; 
 #endif
@@ -78,6 +78,7 @@ int main(int argc, char *argv[])
 
    vector<double> precision;
    vector<double> recall;
+   vector<double> fprate;
 
    double oldCmf = settings.descriptor.maxCmf;
    double oldMinMatches = settings.descriptor.minMatches;
@@ -98,6 +99,10 @@ int main(int argc, char *argv[])
          recall.push_back(0.0);  // shouldn't happen
       else
          recall.push_back(results.correctMatches / (double)corr);
+     
+      int noncorr = results.incorrectMatches + matchRegions.size() - corr;
+
+      fprate.push_back(results.incorrectMatches / (double)noncorr);
 
 #ifdef COUT_ENABLE
       // Output results
@@ -118,7 +123,6 @@ int main(int argc, char *argv[])
 #endif
 
 #ifdef MIN_MATCHES
-   //settings.descriptor.maxCmf = oldCmf;
    for ( double minMatches = 0.0; minMatches < 0.9; minMatches+=0.03333 ) 
    {
       settings.descriptor.minMatches = minMatches;
@@ -134,6 +138,14 @@ int main(int argc, char *argv[])
          recall.push_back(0.0);  // shouldn't happen
       else
          recall.push_back(results.correctMatches / (double)corr);
+
+      int noncorr = results.incorrectMatches + matchRegions.size() - corr;
+
+      if ( corr == 0 )
+         fprate.push_back(0.0);
+      else
+         fprate.push_back(results.incorrectMatches / (double)noncorr);
+
 #ifdef COUT_ENABLE
       // Output results
       cout << "     minMatches: " << settings.descriptor.minMatches << endl;
@@ -158,6 +170,8 @@ int main(int argc, char *argv[])
       fout << precision[i];
       fout << ',';
       fout << recall[i];
+      fout << ',';
+      fout << fprate[i];
       fout << endl;
    }
    fout.close();

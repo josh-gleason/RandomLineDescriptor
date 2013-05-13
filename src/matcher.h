@@ -257,15 +257,18 @@ double randomNormal(double mean, double stdDev)
 }
 
 // generate two random points in a given region (assumes the coefficients in the region are already computed)
-void genRandomPoints(const Point2f& center, const Coefs& coefs, Line& linePts, const ProgramSettings& settings)
+void genRandomPoints(const Point2f& center, const Coefs& coefs, Line& linePts, const ProgramSettings& settings, int idx)
 {
    double r1, r2, t1, t2;
+   double step = 2*M_PI / (1.0+min(settings.descriptor.N,settings.descriptor.Nk));
    do {
       // generate random points in a unit circle (working in polar coords, convert later)
       if ( settings.descriptor.type == ProgramSettings::DescriptorSettings::EDGE_POINTS ) {
          // pick random points on edge of circle
-         t1 = randomUniform(0.0, 2.0*M_PI);
+         //t1 = randomUniform(0.0, 2.0*M_PI);
+         t1 = idx*step;
          t2 = t1 - M_PI;
+
          //t2 = randomUniform(0.0, 2.0*M_PI);
          r1 = r2 = 1.0;
 
@@ -464,12 +467,12 @@ void buildFeatures(Region& region, const Mat& image, size_t lineCount, const Pro
    // compute descriptor for each line
    for ( size_t idx = 0; idx < lineCount; ++idx ) {
       if ( settings.descriptor.smoothRegion ) {
-         genRandomPoints(warpedRect.center, warpedCoefs, region.lines[idx], settings);
+         genRandomPoints(warpedRect.center, warpedCoefs, region.lines[idx], settings, idx);
          buildLineDescriptor(warpedImage, region, idx, settings);
          region.meanErr += region.err[idx];
       } else {
          // sample region without computing affine transform
-         genRandomPoints(region.ellipse.center, region.coefs, region.lines[idx], settings);
+         genRandomPoints(region.ellipse.center, region.coefs, region.lines[idx], settings, idx);
          buildLineDescriptor(image, region, idx, settings);
          region.meanErr += region.err[idx];
       }

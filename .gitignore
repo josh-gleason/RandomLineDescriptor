@@ -1,6 +1,7 @@
 *.pdf
 bin
 Results
+ResultGraphs
 build
 *.swp
 *.jpg
